@@ -206,8 +206,19 @@ export class RuntimeEngine {
 
   build() {
     this.root.innerHTML = "";
-    this.root.style.position = "relative"; this.root.style.overflow = "hidden";
-    this.root.style.width = this.data.canvasWidth + "px"; this.root.style.height = this.data.canvasHeight + "px";
+    // Check the *computed* position to detect whether this root is already
+    // absolutely positioned by CSS (editor preview wrapper).  If so, leave it
+    // alone so it continues to fill its wrapper via inset:0.
+    // For standalone use (exported HTML) the div has no CSS class, so computed
+    // position is "static" and we fall back to "relative" + explicit dimensions.
+    const computedPos = window.getComputedStyle(this.root).position;
+    const isAbsolute = computedPos === "absolute" || computedPos === "fixed";
+    if (!isAbsolute) {
+      this.root.style.position = "relative";
+      this.root.style.width = this.data.canvasWidth + "px";
+      this.root.style.height = this.data.canvasHeight + "px";
+    }
+    this.root.style.overflow = "hidden";
 
     const studio = this.data.gradientStudio;
     // Mode selector removed: whenever there are gradient stops, use studio gradient
