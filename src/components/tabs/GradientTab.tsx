@@ -1,0 +1,353 @@
+import { useRef, useState, useEffect } from "react";
+import { useStore } from "../../store";
+import { Panel, Slider, Select, Toggle, Btn } from "../ui";
+import GradientBar from "../GradientBar";
+import { uid, newCanvasAsset, defaultSchedule } from "../../factory";
+import type { GradientConfig, SavedGradient, SavedPalette, ColorStop } from "../../types";
+import { computeGradientAnim } from "../../gradientMath";
+import {
+  extractColorsFromImage,
+  loadSavedGradients,
+  saveSavedGradients,
+  loadSavedPalettes,
+  saveSavedPalettes,
+} from "../../paletteUtils";
+
+const MODERN_PRESETS: { name: string; colors: string[]; type?: GradientConfig["type"]; angle?: number }[] = [
+  { name: "Aurora", colors: ["#22d3ee", "#a855f7", "#f472b6"], angle: 135 },
+  { name: "Sunset", colors: ["#f97316", "#ec4899", "#7c3aed"], angle: 45 },
+  { name: "Cyber", colors: ["#00f5ff", "#0614ff", "#ff00e5"], angle: 120 },
+  { name: "Mint", colors: ["#d9f99d", "#34d399", "#0f766e"], angle: 90 },
+  { name: "Fire", colors: ["#7f1d1d", "#ef4444", "#facc15"], angle: 35 },
+  { name: "Ocean", colors: ["#020617", "#0369a1", "#67e8f9"], angle: 160 },
+  { name: "Peach", colors: ["#fff7ed", "#fdba74", "#fb7185"], angle: 70 },
+  { name: "Galaxy", colors: ["#0f172a", "#4c1d95", "#db2777", "#fde68a"], type: "radial" },
+  { name: "Lime", colors: ["#1a2e05", "#65a30d", "#ecfccb"], angle: 110 },
+  { name: "Ice", colors: ["#e0f2fe", "#38bdf8", "#312e81"], angle: 180 },
+];
+
+const DIRECTIONS: { type: GradientConfig["type"]; angle: number }[] = [
+  { type: "linear", angle: 0 },
+  { type: "linear", angle: 45 },
+  { type: "linear", angle: 90 },
+  { type: "linear", angle: 135 },
+  { type: "linear", angle: 180 },
+  { type: "linear", angle: 225 },
+  { type: "linear", angle: 270 },
+  { type: "linear", angle: 315 },
+  { type: "conic", angle: 0 },
+  { type: "radial", angle: 0 },
+];
+
+function getGradientCss(g: GradientConfig, angleOverride?: number, typeOverride?: GradientConfig["type"]): string {
+  const type = typeOverride || g.type;
+  const angle = angleOverride !== undefined ? angleOverride : g.angle;
+  const stops = [...g.stops].sort((a, b) => a.offset - b.offset).map((s) => `${s.color} ${(s.offset * 100).toFixed(0)}%`).join(", ");
+  if (type === "radial") return `radial-gradient(circle, ${stops})`;
+  if (type === "conic") return `conic-gradient(from ${angle}deg, ${stops})`;
+  return `linear-gradient(${angle}deg, ${stops})`;
+}
+
+function LiveGradientPreview({ g }: { g: GradientConfig }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    if (!g.animate) {
+      el.style.backgroundImage = getGradientCss(g);
+      el.style.backgroundSize = "100% 100%";
+      el.style.backgroundPosition = "0% 50%";
+      el.style.filter = "none";
+      return;
+    }
+    let raf = 0;
+    const start = performance.now();
+    const loop = (ts: number) => {
+      raf = requestAnimationFrame(loop);
+      if (!ref.current) return;
+      const anim = computeGradientAnim(g, (ts - start) / 1000);
+      const animType = g.animType || (g.type === "linear" ? "rotation" : "hue");
+      if (animType === "panning") {
+        ref.current.style.backgroundImage = getGradientCss(g);
+        ref.current.style.backgroundSize = g.type === "linear" ? "220% 220%" : "100% 100%";
+        ref.current.style.backgroundPosition = `${anim.panPercent}% 50%`;
+        ref.current.style.filter = "none";
+      } else if (animType === "hue") {
+        ref.current.style.backgroundImage = getGradientCss({ ...g, stops: g.stops.map((s) => ({ ...s })) });
+        ref.current.style.filter = anim.hueShift ? `hue-rotate(${anim.hueShift}deg)` : "none";
+        ref.current.style.backgroundSize = "100% 100%";
+        ref.current.style.backgroundPosition = "0% 50%";
+      } else {
+        ref.current.style.filter = "none";
+        ref.current.style.backgroundImage = getGradientCss(g, anim.angle);
+        ref.current.style.backgroundSize = "100% 100%";
+        ref.current.style.backgroundPosition = "0% 50%";
+      }
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, [g]);
+  return <div ref={ref} className="h-16 w-full rounded-lg border border-slate-700" style={{ backgroundImage: getGradientCss(g), backgroundSize: "100% 100%" }} />;
+}
+
+export default function GradientTab() {
+  const data = useStore((s) => s.data())!;
+  const upd = useStore.getState().update;
+  const defaultStudio = {
+    mode: "hybrid" as any,
+    gradient: { enabled: true, type: "linear", angle: 135, stops: [], animate: true, speed: 20, animType: "rotation" },
+  };
+  const studio = data.gradientStudio ?? defaultStudio;
+  const g = studio.gradient;
+
+  const setGrad = (patch: Partial<GradientConfig>) =>
+    upd((d) => {
+      const cur = d.gradientStudio ?? defaultStudio;
+      const nextGradient = { ...cur.gradient, ...patch };
+      d.gradientStudio = { ...cur, mode: "hybrid", gradient: nextGradient } as any;
+    });
+
+  const applyModernPreset = (preset: typeof MODERN_PRESETS[number]) => {
+    const stops = preset.colors.map((color, i) => ({ id: uid(), color, offset: preset.colors.length === 1 ? 0 : i / (preset.colors.length - 1) }));
+    setGrad({ stops, type: preset.type ?? "linear", angle: preset.angle ?? g.angle });
+  };
+
+  const addGradientAsLayerAsset = () => {
+    const css = getGradientCss(g);
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${data.canvasWidth}" height="${data.canvasHeight}" viewBox="0 0 ${data.canvasWidth} ${data.canvasHeight}"><foreignObject width="100%" height="100%"><div xmlns="http://www.w3.org/1999/xhtml" style="width:100%;height:100%;background:${css};"></div></foreignObject></svg>`;
+    const encoded = btoa(unescape(encodeURIComponent(svg)));
+    const dataUrl = `data:image/svg+xml;base64,${encoded}`;
+    const media = {
+      id: uid(),
+      name: "Gradient Layer",
+      type: "svg" as const,
+      dataUrl,
+      width: data.canvasWidth,
+      height: data.canvasHeight,
+      categoryId: "static-assets",
+      schedule: defaultSchedule(),
+      inLibrary: false,
+    };
+    useStore.getState().addMedia(media as any);
+    const layer = data.layers.find((l) => l.id === "layer-bg") ?? data.layers[0];
+    const asset = newCanvasAsset(media.id, layer.id, media as any);
+    Object.assign(asset, { x: 0, y: 0, width: data.canvasWidth, height: data.canvasHeight, name: "Gradient Layer", fit: "fill" as const, opacity: 0.65, blend: "overlay" as const, gradient: structuredClone(g) });
+    useStore.getState().addAsset(asset);
+    useStore.getState().select("asset", asset.id);
+  };
+
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [paletteColors, setPaletteColors] = useState<string[]>([]);
+  const [activeColors, setActiveColors] = useState<boolean[]>([]);
+  const [numColors, setNumColors] = useState(6);
+  const [lastImage, setLastImage] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [savedPalettes, setSavedPalettes] = useState<SavedPalette[]>([]);
+  const [savedGradients, setSavedGradients] = useState<SavedGradient[]>([]);
+  const paletteUndo = useRef<{ paletteColors: string[]; activeColors: boolean[]; savedPalettes: SavedPalette[] }[]>([]);
+
+  const pushPaletteUndo = () => {
+    paletteUndo.current = [...paletteUndo.current, { paletteColors, activeColors, savedPalettes }].slice(-30);
+  };
+  const undoPalette = () => {
+    const prev = paletteUndo.current.pop();
+    if (!prev) return;
+    setPaletteColors(prev.paletteColors);
+    setActiveColors(prev.activeColors);
+    setSavedPalettes(prev.savedPalettes);
+    saveSavedPalettes(prev.savedPalettes);
+  };
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "z") return;
+      if (!paletteUndo.current.length) return;
+      e.preventDefault();
+      undoPalette();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [paletteColors, activeColors, savedPalettes]);
+
+  useEffect(() => {
+    setSavedPalettes(loadSavedPalettes());
+    setSavedGradients(loadSavedGradients());
+  }, []);
+
+  const runExtract = async (dataUrl: string, n: number) => {
+    setBusy(true);
+    const colors = await extractColorsFromImage(dataUrl, n);
+    pushPaletteUndo();
+    setPaletteColors(colors);
+    setActiveColors(colors.map(() => true));
+    setBusy(false);
+  };
+
+  const onUpload = async (file: File | undefined) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const url = reader.result as string;
+      setLastImage(url);
+      runExtract(url, numColors);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const enabledColors = paletteColors.filter((_, i) => activeColors[i]);
+
+  const makeGradientFromPalette = () => {
+    if (enabledColors.length < 2) return;
+    const stops: ColorStop[] = enabledColors.map((c, i) => ({
+      id: uid(),
+      color: c,
+      offset: enabledColors.length === 1 ? 0 : i / (enabledColors.length - 1),
+    }));
+    setGrad({ stops });
+  };
+
+  const savePalette = () => {
+    if (!enabledColors.length) return;
+    pushPaletteUndo();
+    const p: SavedPalette = { id: uid(), name: "Palette " + (savedPalettes.length + 1), colors: enabledColors };
+    const next = [p, ...savedPalettes];
+    setSavedPalettes(next);
+    saveSavedPalettes(next);
+  };
+
+  const applySavedPalette = (p: SavedPalette) => {
+    pushPaletteUndo();
+    setPaletteColors(p.colors);
+    setActiveColors(p.colors.map(() => true));
+  };
+
+  const deleteSavedPalette = (id: string) => {
+    pushPaletteUndo();
+    const next = savedPalettes.filter((p) => p.id !== id);
+    setSavedPalettes(next);
+    saveSavedPalettes(next);
+  };
+
+  const saveGradient = () => {
+    const sg: SavedGradient = { id: uid(), name: "Gradient " + (savedGradients.length + 1), gradient: g };
+    const next = [sg, ...savedGradients];
+    setSavedGradients(next);
+    saveSavedGradients(next);
+  };
+
+  const applySavedGradient = (sg: SavedGradient) => {
+    setGrad({ ...sg.gradient });
+  };
+
+  const deleteSavedGradient = (id: string) => {
+    const next = savedGradients.filter((s) => s.id !== id);
+    setSavedGradients(next);
+    saveSavedGradients(next);
+  };
+
+  return (
+    <div>
+      <Panel title="🎨 Color Palette (from image)">
+        <input ref={fileRef} type="file" accept="image/*" hidden onChange={(e) => onUpload(e.target.files?.[0])} />
+        <Btn className="w-full" onClick={() => fileRef.current?.click()}>⬆ Upload Image</Btn>
+        {lastImage && <img src={lastImage} className="mt-2 h-16 w-full rounded object-cover" alt="source" />}
+        <div className="mt-1">
+          <Slider label={`Extract colors: ${numColors}`} min={2} max={20} value={numColors} onChange={(v) => { setNumColors(v); if (lastImage) runExtract(lastImage, v); }} />
+        </div>
+        {busy && <p className="text-[10px] text-violet-300">Extracting…</p>}
+        {paletteColors.length > 0 && (
+          <>
+            <p className="text-[9px] text-slate-500">Click a swatch to toggle it on/off before saving or building a gradient.</p>
+            <div className="grid grid-cols-8 gap-1">
+              {paletteColors.map((c, i) => (
+                <button key={i} onClick={() => { pushPaletteUndo(); setActiveColors((a) => a.map((v, idx) => (idx === i ? !v : v))); }} title={c} className={`aspect-square rounded border-2 ${activeColors[i] ? "border-white" : "border-transparent opacity-25"}`} style={{ background: c }} />
+              ))}
+            </div>
+            <div className="grid grid-cols-3 gap-1.5">
+              <Btn onClick={undoPalette}>↶ Undo Swatch</Btn>
+              <Btn onClick={savePalette}>💾 Save Swatch</Btn>
+              <Btn variant="primary" onClick={makeGradientFromPalette}>→ Make Gradient</Btn>
+            </div>
+          </>
+        )}
+        {savedPalettes.length > 0 && (
+          <div>
+            <div className="mb-1 mt-2 text-[9px] uppercase tracking-wide text-slate-500">Saved Palettes</div>
+            <div className="space-y-1">
+              {savedPalettes.map((p) => (
+                <div key={p.id} className="flex items-center gap-1.5 rounded border border-slate-800 bg-slate-800/40 p-1">
+                  <div className="flex h-5 flex-1 overflow-hidden rounded">
+                    {p.colors.map((c, i) => <div key={i} className="flex-1" style={{ background: c }} />)}
+                  </div>
+                  <button onClick={() => applySavedPalette(p)} className="rounded bg-slate-700 px-1.5 py-0.5 text-[9px] text-slate-100 hover:bg-slate-600">Use</button>
+                  <button onClick={() => deleteSavedPalette(p.id)} className="rounded px-1 text-[10px] text-rose-400 hover:bg-rose-900/40">×</button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </Panel>
+
+      <Panel title="🌈 Gradient Studio (free - no mode limits)">
+        <LiveGradientPreview g={g} />
+        <div>
+          <div className="mb-1 text-[9px] uppercase tracking-wide text-slate-500">Modern presets</div>
+          <div className="grid grid-cols-5 gap-1.5">
+            {MODERN_PRESETS.map((preset) => (
+              <button key={preset.name} title={preset.name} onClick={() => applyModernPreset(preset)} className="aspect-square rounded-md border border-slate-700 hover:border-violet-400" style={{ background: preset.type === "radial" ? `radial-gradient(circle, ${preset.colors.join(", ")})` : `linear-gradient(${preset.angle ?? 135}deg, ${preset.colors.join(", ")})` }} />
+            ))}
+          </div>
+        </div>
+        <Btn className="w-full" onClick={addGradientAsLayerAsset}>➕ Add current gradient as canvas layer asset</Btn>
+        <p className="text-[10px] text-slate-500">Creates a full-canvas gradient layer asset, so you can reorder it with images and use opacity/blend mode. Gradient is also available for particles (set particle Color Mode to Gradient in Particles tab).</p>
+        <GradientBar stops={g.stops} onChange={(stops) => setGrad({ stops })} />
+        <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-2">
+          <Toggle label="Animated" checked={g.animate} onChange={(v) => setGrad({ animate: v })} />
+          {g.animate && (
+            <div className="mt-2 space-y-2">
+              <div>
+                <div className="mb-1 text-[9px] uppercase tracking-wide text-slate-500">Animation Type</div>
+                <div className="grid grid-cols-3 gap-1">
+                  {(["rotation", "panning", "hue"] as const).map((t) => (
+                    <button key={t} onClick={() => setGrad({ animType: t })} className={`rounded px-1 py-1 text-[10px] capitalize ${ (g.animType ?? "rotation") === t ? "bg-violet-600 text-white" : "bg-slate-800 text-slate-300"}`}>{t === "hue" ? "Hue shift" : t}</button>
+                  ))}
+                </div>
+              </div>
+              <Slider label="Animation speed (sec/cycle)" min={2} max={60} value={g.speed} onChange={(v) => setGrad({ speed: v })} format={(v) => `${v}s`} />
+            </div>
+          )}
+        </div>
+        <div className="grid grid-cols-2 gap-1.5">
+          <Select value={g.type} onChange={(v) => setGrad({ type: v as GradientConfig["type"] })} options={[{ value: "linear", label: "Linear" }, { value: "radial", label: "Radial" }, { value: "conic", label: "Conic" }]} />
+          {g.type !== "radial" && <Slider label="Angle" min={0} max={360} value={g.angle} onChange={(v) => setGrad({ angle: v })} format={(v) => `${v}°`} />}
+        </div>
+        <div>
+          <div className="mb-1 text-[9px] uppercase tracking-wide text-slate-500">Direction</div>
+          <div className="grid grid-cols-5 gap-1.5">
+            {DIRECTIONS.map((d, i) => (
+              <button key={i} onClick={() => setGrad({ type: d.type, angle: d.angle })} className={`flex aspect-square items-center justify-center rounded-lg border overflow-hidden ${ g.type === d.type && (d.type === "radial" || d.type === "conic" || g.angle === d.angle) ? "border-violet-400 ring-1 ring-violet-400" : "border-slate-700 hover:border-slate-500"}`} style={{ background: getGradientCss(g, d.angle, d.type) }} />
+            ))}
+          </div>
+        </div>
+        <div className="flex items-center justify-between border-t border-slate-800 pt-2">
+          <span className="text-[9px] uppercase tracking-wide text-slate-500">Presets</span>
+          <Btn onClick={saveGradient}>💾 Save Current</Btn>
+        </div>
+        {savedGradients.length > 0 && (
+          <div className="space-y-1">
+            {savedGradients.map((sg) => {
+              const stops = [...sg.gradient.stops].sort((a, b) => a.offset - b.offset).map((s) => `${s.color} ${s.offset * 100}%`).join(", ");
+              return (
+                <div key={sg.id} className="flex items-center gap-1.5 rounded border border-slate-800 bg-slate-800/40 p-1">
+                  <div className="h-5 flex-1 rounded" style={{ background: `linear-gradient(90deg, ${stops})` }} />
+                  <button onClick={() => applySavedGradient(sg)} className="rounded bg-slate-700 px-1.5 py-0.5 text-[9px] text-slate-100 hover:bg-slate-600">Use</button>
+                  <button onClick={() => deleteSavedGradient(sg.id)} className="rounded px-1 text-[10px] text-rose-400 hover:bg-rose-900/40">×</button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </Panel>
+    </div>
+  );
+}
