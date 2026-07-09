@@ -203,8 +203,11 @@ RuntimeEngine.prototype.elapsedSec=function(){
 };
 RuntimeEngine.prototype.build=function(){
   var d=this.data, root=this.root, self=this;
-  root.innerHTML=''; root.style.position='relative'; root.style.overflow='hidden';
-  root.style.width=d.canvasWidth+'px'; root.style.height=d.canvasHeight+'px';
+  root.innerHTML='';
+  var _computedPos=window.getComputedStyle(root).position;
+  var _isAbsolute=_computedPos==='absolute'||_computedPos==='fixed';
+  if(!_isAbsolute){root.style.position='relative'; root.style.width=d.canvasWidth+'px'; root.style.height=d.canvasHeight+'px';}
+  root.style.overflow='hidden';
   var studio=d.gradientStudio;
   // Mode selector removed: any gradient with stops renders as background (hybrid-style).
   var useStudioBg=studio&&studio.gradient.stops.length;

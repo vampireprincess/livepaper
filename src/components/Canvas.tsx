@@ -328,7 +328,8 @@ export default function Canvas() {
         </div>
       )}
       <div ref={stageRef} onPointerDown={onStageDown} className="relative origin-center shadow-2xl shadow-black/60" style={{ width: W, height: H, transform: `scale(${scale})`, background: runtimePreview ? "transparent" : data.bgColor, cursor: tool !== "select" ? "crosshair" : "default" }}>
-        <GradientBackgroundLayer />
+        {/* GradientBackgroundLayer only shown in editor mode; engine renders its own gradient in runtime preview */}
+        {!runtimePreview && <GradientBackgroundLayer />}
         {!runtimePreview && (
           <>
             {data.layers.map((layer) => {
@@ -401,7 +402,10 @@ export default function Canvas() {
             </div>
           </div>
         )}
-        <div ref={runtimeRef} className="absolute inset-0" style={{ display: runtimePreview ? "block" : "none" }} />
+        {/* Runtime engine wrapper: keeps absolute inset-0 positioning so engine can set its own bg on runtimeRef */}
+        <div className="absolute inset-0 overflow-hidden" style={{ display: runtimePreview ? "block" : "none" }}>
+          <div ref={runtimeRef} className="absolute inset-0" />
+        </div>
       </div>
     </div>
   );
