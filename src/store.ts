@@ -147,40 +147,60 @@ export const useStore = create<AppState>((set, get) => {
 
     init: async () => {
       let projects = await loadAllProjects();
-      projects = projects.map((p) => ({
-        ...p,
-        data: {
-          ...normalizeCanvasSize(p.data),
-          categories: (p.data.categories ?? createProject().data.categories).map(c => ({
-            ...c,
-            flipAxis: c.flipAxis ?? "horizontal",
-          })),
-          assets: p.data.assets.map((a) => {
-            const media = (p.data.media || []).find((m: any) => m.id === a.mediaId);
-            const looksLikeGradient = a.gradient || /gradient/i.test(a.name ?? "") || /gradient/i.test(media?.name ?? "");
-            return {
-              ...a,
-              fit: a.fit ?? "contain",
-              gradient: a.gradient ?? (looksLikeGradient ? structuredClone(p.data.gradientStudio?.gradient ?? createProject().data.gradientStudio!.gradient) : undefined),
-            };
-          }),
-          paths: (p.data.paths || []).map((path: any) => ({ ...path, mode: path.mode ?? "curve", easing: path.easing ?? "linear" })),
-          zones: (p.data.zones || []).map((z: any) => ({
-            ...z,
-            visible: z.visible ?? true,
-            fillOpacity: z.fillOpacity ?? 0.15,
-            strokeColor: z.strokeColor ?? z.color,
-            strokeWidth: z.strokeWidth ?? 2,
-            strokeStyle: z.strokeStyle ?? "solid",
-          })),
-          media: (p.data.media || []).map((m: any) => ({
-            ...m,
-            categoryId: m.categoryId ?? m.category ?? "cat-general",
-            schedule: m.schedule ?? { spawnMode: "path", frequencyPerHour: 10, dailyLimit: 0, weeklyLimit: 0, hourlyLimit: 0, dateStart: "", dateEnd: "", hourStart: 0, hourEnd: 24, durationSec: 12, weight: 1, enabled: true },
-            inLibrary: m.inLibrary ?? ((m.categoryId ?? m.category) !== "static-assets"),
-          })),
-        },
-      }));
+      projects = projects.map((p) => {
+        const defaultProj = createProject();
+        const normalizedData = normalizeCanvasSize(p.data);
+        return {
+          ...p,
+          data: {
+            ...normalizedData,
+            gradientStudio: p.data.gradientStudio ?? defaultProj.data.gradientStudio,
+            categories: (normalizedData.categories ?? defaultProj.data.categories).map(c => ({
+              ...c,
+              flipAxis: c.flipAxis ?? "horizontal",
+            })),
+            assets: normalizedData.assets.map((a) => {
+              const media = (normalizedData.media || []).find((m: any) => m.id === a.mediaId);
+              const looksLikeGradient = a.gradient || /gradient/i.test(a.name ?? "") || /gradient/i.test(media?.name ?? "");
+              return {
+                ...a,
+                fit: a.fit ?? "contain",
+                gradient: a.gradient ?? (looksLikeGradient ? structuredClone((p.data.gradientStudio ?? defaultProj.data.gradientStudio)!.gradient) : undefined),
+                parallax: a.parallax ?? { enabled: false, trigger: "mouse", factorX: 20, factorY: 20, smoothing: 0.1 },
+                audioReactive: a.audioReactive ?? { enabled: false, frequency: "bass", sensitivity: 5, smoothing: 0.5, affectScale: true, affectRotation: false, affectPosition: false, affectOpacity: false },
+                interactiveEvents: a.interactiveEvents ?? [],
+              };
+            }),
+            particles: (normalizedData.particles || []).map((p: any) => ({
+              ...p,
+              audioReactive: p.audioReactive ?? {
+                enabled: false,
+                frequency: "bass",
+                sensitivity: 5,
+                smoothing: 0.7,
+                affectSize: true,
+                affectSpeed: false,
+                affectOpacity: false,
+              }
+            })),
+            paths: (normalizedData.paths || []).map((path: any) => ({ ...path, mode: path.mode ?? "curve", easing: path.easing ?? "linear" })),
+            zones: (normalizedData.zones || []).map((z: any) => ({
+              ...z,
+              visible: z.visible ?? true,
+              fillOpacity: z.fillOpacity ?? 0.15,
+              strokeColor: z.strokeColor ?? z.color,
+              strokeWidth: z.strokeWidth ?? 2,
+              strokeStyle: z.strokeStyle ?? "solid",
+            })),
+            media: (normalizedData.media || []).map((m: any) => ({
+              ...m,
+              categoryId: m.categoryId ?? m.category ?? "cat-general",
+              schedule: m.schedule ?? { spawnMode: "path", frequencyPerHour: 10, dailyLimit: 0, weeklyLimit: 0, hourlyLimit: 0, dateStart: "", dateEnd: "", hourStart: 0, hourEnd: 24, durationSec: 12, weight: 1, enabled: true },
+              inLibrary: m.inLibrary ?? ((m.categoryId ?? m.category) !== "static-assets"),
+            })),
+          },
+        };
+      });
       await Promise.all(projects.map((p) => saveProjectDb(p)));
       if (!projects.length) {
         const p = createProject("My First Scene");

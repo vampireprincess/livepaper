@@ -98,6 +98,65 @@ export default function ParticleInspector() {
         <ZoneChips label="Include zones" selected={p.includeZoneIds} onChange={(ids) => set({ includeZoneIds: ids })} include />
         <ZoneChips label="Exclude zones" selected={p.excludeZoneIds} onChange={(ids) => set({ excludeZoneIds: ids })} include={false} />
       </Panel>
+
+      <Panel title="Audio-Reactive Behavior" defaultCollapsed>
+        <Toggle
+          label="Enable Audio-Reactive"
+          checked={!!p.audioReactive?.enabled}
+          onChange={(v) => set({ audioReactive: { ...(p.audioReactive || { frequency: "bass", sensitivity: 5, smoothing: 0.7, affectSize: true, affectSpeed: false, affectOpacity: false }), enabled: v } })}
+        />
+        {p.audioReactive?.enabled && (
+          <div className="mt-2 space-y-3 pt-2">
+            <Field label="Frequency Band">
+              <Select
+                value={p.audioReactive.frequency || "bass"}
+                onChange={(v) => set({ audioReactive: { ...p.audioReactive!, frequency: v as "bass" | "mid" | "treble" | "full" } })}
+                options={[
+                  { value: "bass", label: "Bass (Low Freq)" },
+                  { value: "mid", label: "Mids (Voice/vocals)" },
+                  { value: "treble", label: "Treble (High Freq)" },
+                  { value: "full", label: "Full Range (Loudness)" },
+                ]}
+              />
+            </Field>
+            <Slider
+              label="Sensitivity"
+              min={1}
+              max={15}
+              step={0.5}
+              value={p.audioReactive.sensitivity ?? 5}
+              onChange={(v) => set({ audioReactive: { ...p.audioReactive!, sensitivity: v } })}
+            />
+            <Slider
+              label="Smoothing"
+              min={0}
+              max={0.95}
+              step={0.05}
+              value={p.audioReactive.smoothing ?? 0.7}
+              onChange={(v) => set({ audioReactive: { ...p.audioReactive!, smoothing: v } })}
+              format={(v) => `${Math.round(v * 100)}%`}
+            />
+            <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-2 space-y-1.5">
+              <div className="text-[9px] uppercase tracking-wide text-slate-500">Audio affects…</div>
+              <Toggle
+                label="Particle size (pulse)"
+                checked={!!p.audioReactive.affectSize}
+                onChange={(v) => set({ audioReactive: { ...p.audioReactive!, affectSize: v } })}
+              />
+              <Toggle
+                label="Particle speed"
+                checked={!!p.audioReactive.affectSpeed}
+                onChange={(v) => set({ audioReactive: { ...p.audioReactive!, affectSpeed: v } })}
+              />
+              <Toggle
+                label="Particle opacity"
+                checked={!!p.audioReactive.affectOpacity}
+                onChange={(v) => set({ audioReactive: { ...p.audioReactive!, affectOpacity: v } })}
+              />
+            </div>
+          </div>
+        )}
+      </Panel>
     </div>
   );
 }

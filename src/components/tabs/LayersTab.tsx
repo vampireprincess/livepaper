@@ -12,6 +12,10 @@ export default function LayersTab() {
   const [dropHint, setDropHint] = useState<{ layerId: string; assetId: string | null; pos: "above" | "below" } | null>(null);
   const assetDraggingFromLayerRef = useRef<string | null>(null);
 
+  // Synchronous drag state refs to avoid React state update lag during drag events
+  const dragKindRef = useRef<DragKind | null>(null);
+  const draggedIdRef = useRef<string | null>(null);
+
   // Used to allow dragging only when the ⠿ handle is the origin
   const layerDragAllowedRef = useRef(false);
   const assetDragAllowedRef = useRef(false);
@@ -32,6 +36,8 @@ export default function LayersTab() {
       .reverse();
 
   const clearDrag = () => {
+    dragKindRef.current = null;
+    draggedIdRef.current = null;
     setDragKind(null);
     setDraggedId(null);
     setDropHint(null);
@@ -105,12 +111,18 @@ export default function LayersTab() {
     layerDragAllowedRef.current = true;
   };
   const onLayerDragStart = (e: React.DragEvent, layerId: string) => {
-    if (isLockedMode || !layerDragAllowedRef.current) { e.preventDefault(); return; }
-    setDragKind("layer");
-    setDraggedId(layerId);
-    setDropHint(null);
+    if (isLockedMode) { e.preventDefault(); return; }
+    dragKindRef.current = "layer";
+    draggedIdRef.current = layerId;
     e.dataTransfer.effectAllowed = "move";
     e.dataTransfer.setData("text/plain", "layer:" + layerId);
+
+    // Delay state updates to prevent immediate React re-render from canceling the drag
+    setTimeout(() => {
+      setDragKind("layer");
+      setDraggedId(layerId);
+      setDropHint(null);
+    }, 0);
   };
   const onLayerDragEnd = () => {
     clearDrag();
@@ -118,31 +130,30 @@ export default function LayersTab() {
 
   // Layer row receives dragOver/drop only for layer-kind drags
   const onLayerRowDragOver = (e: React.DragEvent, layerId: string) => {
-    if (dragKind !== "layer" || !draggedId || isLockedMode) {
-      // Allow asset drag-over to pass through to asset drop zones inside
-      if (dragKind === "asset") {
-        e.preventDefault();
-        e.dataTransfer.dropEffect = "move";
-      }
+    const dk = dragKindRef.current;
+    const dId = draggedIdRef.current;
+    if (dk !== "layer" || !dId || isLockedMode) {
       return;
     }
     e.preventDefault();
     e.stopPropagation();
     e.dataTransfer.dropEffect = "move";
-    if (draggedId === layerId) { setDropHint(null); return; }
+    if (dId === layerId) { setDropHint(null); return; }
     const row = e.currentTarget as HTMLElement;
     const pos = computeLayerDrop(row, e.clientY);
     setDropHint({ layerId, assetId: null, pos });
   };
 
   const onLayerRowDrop = (e: React.DragEvent, layerId: string) => {
-    if (dragKind !== "layer" || !draggedId || isLockedMode) return;
+    const dk = dragKindRef.current;
+    const dId = draggedIdRef.current;
+    if (dk !== "layer" || !dId || isLockedMode) return;
     e.preventDefault();
     e.stopPropagation();
-    if (draggedId !== layerId) {
+    if (dId !== layerId) {
       const row = e.currentTarget as HTMLElement;
       const pos = computeLayerDrop(row, e.clientY);
-      reorderLayers(draggedId, layerId, pos);
+      reorderLayers(dId, layerId, pos);
     }
     clearDrag();
   };
@@ -152,14 +163,19 @@ export default function LayersTab() {
     assetDragAllowedRef.current = true;
   };
   const onAssetDragStart = (e: React.DragEvent, assetId: string, layerId: string) => {
-    if (isLockedMode || !assetDragAllowedRef.current) { e.preventDefault(); return; }
-    e.stopPropagation();
-    setDragKind("asset");
-    setDraggedId(assetId);
-    assetDraggingFromLayerRef.current = layerId;
-    setDropHint(null);
+    if (isLockedMode) { e.preventDefault(); return; }
+    dragKindRef.current = "asset";
+    draggedIdRef.current = assetId;
     e.dataTransfer.effectAllowed = "move";
     e.dataTransfer.setData("text/plain", "asset:" + assetId);
+
+    // Delay state updates to prevent immediate React re-render from canceling the drag
+    setTimeout(() => {
+      setDragKind("asset");
+      setDraggedId(assetId);
+      assetDraggingFromLayerRef.current = layerId;
+      setDropHint(null);
+    }, 0);
   };
   const onAssetDragEnd = (e: React.DragEvent) => {
     e.stopPropagation();
@@ -167,60 +183,73 @@ export default function LayersTab() {
   };
 
   const onAssetRowDragOver = (e: React.DragEvent, layerId: string, assetId: string) => {
-    if (dragKind !== "asset" || !draggedId || isLockedMode) return;
+    const dk = dragKindRef.current;
+    const dId = draggedIdRef.current;
+    if (dk !== "asset" || !dId || isLockedMode) return;
     e.preventDefault();
     e.stopPropagation();
     e.dataTransfer.dropEffect = "move";
-    if (draggedId === assetId) { setDropHint(null); return; }
+    if (dId === assetId) { setDropHint(null); return; }
     const row = e.currentTarget as HTMLElement;
     const pos = computeAssetDrop(row, e.clientY);
     setDropHint({ layerId, assetId, pos });
   };
 
   const onAssetRowDrop = (e: React.DragEvent, layerId: string, assetId: string) => {
+    const dk = dragKindRef.current;
+    const dId = draggedIdRef.current;
     e.preventDefault();
     e.stopPropagation();
-    if (dragKind !== "asset" || !draggedId || isLockedMode) { clearDrag(); return; }
-    if (draggedId === assetId) { clearDrag(); return; }
+    if (dk !== "asset" || !dId || isLockedMode) { clearDrag(); return; }
+    if (dId === assetId) { clearDrag(); return; }
     const row = e.currentTarget as HTMLElement;
     const pos = computeAssetDrop(row, e.clientY);
-    reorderAsset(draggedId, layerId, assetId, pos);
+    reorderAsset(dId, layerId, assetId, pos);
     clearDrag();
   };
 
   // Edge drop zones for asset list (top/bottom of a layer's asset list)
   const onAssetEdgeDragOver = (e: React.DragEvent, layerId: string, pos: "above" | "below") => {
-    if (dragKind !== "asset" || !draggedId || isLockedMode) return;
+    const dk = dragKindRef.current;
+    const dId = draggedIdRef.current;
+    if (dk !== "asset" || !dId || isLockedMode) return;
     e.preventDefault();
     e.stopPropagation();
     e.dataTransfer.dropEffect = "move";
     setDropHint({ layerId, assetId: null, pos });
   };
   const onAssetEdgeDrop = (e: React.DragEvent, layerId: string, pos: "above" | "below") => {
+    const dk = dragKindRef.current;
+    const dId = draggedIdRef.current;
     e.preventDefault();
     e.stopPropagation();
-    if (dragKind !== "asset" || !draggedId || isLockedMode) { clearDrag(); return; }
-    reorderAsset(draggedId, layerId, null, pos === "above" ? "top" : "bottom");
+    if (dk !== "asset" || !dId || isLockedMode) { clearDrag(); return; }
+    reorderAsset(dId, layerId, null, pos === "above" ? "top" : "bottom");
     clearDrag();
   };
 
   // Global edge drop zones for layers (very top / very bottom)
   const onLayerEdgeDragOver = (e: React.DragEvent, where: "top" | "bottom") => {
-    if (dragKind !== "layer" || !draggedId || isLockedMode) return;
+    const dk = dragKindRef.current;
+    const dId = draggedIdRef.current;
+    if (dk !== "layer" || !dId || isLockedMode) return;
     e.preventDefault();
     e.stopPropagation();
     e.dataTransfer.dropEffect = "move";
     const targetId = where === "top" ? orderedLayers[0]?.id : orderedLayers[orderedLayers.length - 1]?.id;
-    if (!targetId || targetId === draggedId) { setDropHint(null); return; }
+    if (!targetId || targetId === dId) { setDropHint(null); return; }
     setDropHint({ layerId: targetId, assetId: null, pos: where === "top" ? "above" : "below" });
   };
   const onLayerEdgeDrop = (e: React.DragEvent, where: "top" | "bottom") => {
+    const dk = dragKindRef.current;
+    const dId = draggedIdRef.current;
+    if (dk !== "layer" || !dId || isLockedMode) return;
     e.preventDefault();
     e.stopPropagation();
-    if (dragKind !== "layer" || !draggedId || isLockedMode) { clearDrag(); return; }
+    if (dk !== "layer" || !dId || isLockedMode) { clearDrag(); return; }
     const targetId = where === "top" ? orderedLayers[0]?.id : orderedLayers[orderedLayers.length - 1]?.id;
-    if (!targetId || targetId === draggedId) { clearDrag(); return; }
-    reorderLayers(draggedId, targetId, where === "top" ? "above" : "below");
+    if (!targetId || targetId === dId) { clearDrag(); return; }
+    reorderLayers(dId, targetId, where === "top" ? "above" : "below");
     clearDrag();
   };
 
@@ -242,12 +271,15 @@ export default function LayersTab() {
         onDragOver={(e) => onLayerEdgeDragOver(e, "top")}
         onDragLeave={() => setDropHint((c) => (c && c.layerId === orderedLayers[0]?.id && c.assetId === null && c.pos === "above" ? null : c))}
         onDrop={(e) => onLayerEdgeDrop(e, "top")}
-        className={`mb-1 h-2 w-full rounded transition-colors ${
-          dropHint && dropHint.assetId === null && dropHint.layerId === orderedLayers[0]?.id && dropHint.pos === "above" && dragKind === "layer"
-            ? "bg-emerald-500"
-            : dragKind === "layer" ? "bg-transparent hover:bg-slate-800/40" : "bg-transparent"
-        }`}
-      />
+        className="relative h-2.5 w-full my-1 rounded transition-colors hover:bg-slate-800/20"
+      >
+        {dropHint && dropHint.assetId === null && dropHint.layerId === orderedLayers[0]?.id && dropHint.pos === "above" && dragKind === "layer" && (
+          <div className="pointer-events-none absolute inset-y-0 left-0 right-0 z-50 flex items-center">
+            <div className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_8px_#34d399]" />
+            <div className="h-1 flex-1 bg-emerald-400 shadow-[0_0_8px_#34d399]" />
+          </div>
+        )}
+      </div>
 
       <div className="space-y-1">
         {orderedLayers.map((layer) => {
@@ -261,9 +293,12 @@ export default function LayersTab() {
 
           return (
             <div key={layer.id} className="relative">
-              {/* Green line ABOVE layer group */}
+              {/* Insertion marker line ABOVE layer group */}
               {showAboveLine && (
-                <div className="pointer-events-none absolute -top-0.5 left-0 right-0 z-20 h-0.5 rounded bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.8)]" />
+                <div className="pointer-events-none absolute -top-1 left-0 right-0 z-50 flex items-center">
+                  <div className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_8px_#34d399]" />
+                  <div className="h-1 flex-1 bg-emerald-400 shadow-[0_0_8px_#34d399]" />
+                </div>
               )}
 
               {/* Layer group container — NOT draggable itself; only handle triggers drag */}
@@ -282,17 +317,16 @@ export default function LayersTab() {
                 } ${isLockedMode ? "pointer-events-none select-none opacity-70" : ""} ${layerDragging ? "opacity-40" : ""}`}
               >
                 <div className="flex items-center gap-1.5">
-                  {/* Layer drag handle — draggable only when this handle is used */}
-                  <span
+                  {/* Layer drag handle */}
+                  <div
                     draggable={!isLockedMode}
-                    onMouseDown={onLayerHandleMouseDown}
                     onDragStart={(e) => onLayerDragStart(e, layer.id)}
                     onDragEnd={onLayerDragEnd}
-                    className="select-none cursor-grab active:cursor-grabbing rounded px-1 text-slate-500 hover:bg-slate-700 hover:text-slate-200"
+                    className="select-none cursor-grab active:cursor-grabbing inline-flex items-center justify-center h-6 w-6 rounded bg-slate-800 border border-slate-700 text-slate-400 hover:bg-slate-700 hover:text-white font-mono text-[12px] shrink-0 mr-1"
                     title="Prevuci layer grupu"
                   >
                     ⠿
-                  </span>
+                  </div>
                   <TextInput
                     value={layer.name}
                     onChange={(v) => !isLockedMode && useStore.getState().updateLayer(layer.id, { name: v })}
@@ -318,12 +352,14 @@ export default function LayersTab() {
                     onDragOver={(e) => onAssetEdgeDragOver(e, layer.id, "above")}
                     onDragLeave={() => setDropHint((c) => (c && c.layerId === layer.id && c.assetId === null && c.pos === "above" ? null : c))}
                     onDrop={(e) => onAssetEdgeDrop(e, layer.id, "above")}
-                    className={`h-2 w-full rounded transition-colors ${
-                      dropHint?.layerId === layer.id && dropHint.assetId === null && dropHint.pos === "above" && dragKind === "asset"
-                        ? "bg-emerald-500"
-                        : dragKind === "asset" ? "hover:bg-slate-700/40" : ""
-                    }`}
-                  />
+                    className="relative h-2.5 w-full rounded hover:bg-slate-700/10"
+                  >
+                    {dropHint?.layerId === layer.id && dropHint.assetId === null && dropHint.pos === "above" && dragKind === "asset" && (
+                      <div className="pointer-events-none absolute inset-y-0 left-0 right-0 z-10 flex items-center">
+                        <div className="h-0.5 flex-1 bg-emerald-400 shadow-[0_0_6px_#34d399]" />
+                      </div>
+                    )}
+                  </div>
 
                   {assets.length === 0 && dragKind === "asset" && (
                     <div className="py-2 text-center text-[10px] text-slate-600">↳ baci ovde</div>
@@ -337,8 +373,8 @@ export default function LayersTab() {
                     const belowMe = dropHint?.layerId === layer.id && dropHint.assetId === a.id && dropHint.pos === "below";
                     return (
                       <div key={a.id} className="relative">
-                        {aboveMe && <div className="pointer-events-none absolute -top-0.5 left-0 right-0 z-10 h-0.5 rounded bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.8)]" />}
-                        {/* Asset row — NOT draggable on the whole row; only ⠿ handle triggers drag */}
+                        {aboveMe && <div className="pointer-events-none absolute -top-0.5 left-0 right-0 z-10 h-0.5 rounded bg-emerald-400 shadow-[0_0_6px_#34d399]" />}
+                        {/* Asset row — NOT draggable itself; only handle triggers drag */}
                         <div
                           onDragOver={(e) => onAssetRowDragOver(e, layer.id, a.id)}
                           onDragLeave={(e) => {
@@ -353,17 +389,16 @@ export default function LayersTab() {
                             isAssetSelected ? "bg-violet-950/60 text-violet-200 border-violet-500" : "bg-slate-800/60 text-slate-300 border-transparent hover:bg-slate-800"
                           } ${isLockedMode ? "pointer-events-none select-none opacity-70" : ""} ${isDraggingThis ? "opacity-40" : ""}`}
                         >
-                          {/* Asset drag handle — only this span is draggable */}
-                          <span
+                          {/* Asset drag handle — draggable only when this handle is used */}
+                          <div
                             draggable={!isLockedMode}
-                            onMouseDown={onAssetHandleMouseDown}
                             onDragStart={(e) => onAssetDragStart(e, a.id, layer.id)}
                             onDragEnd={onAssetDragEnd}
-                            className="select-none cursor-grab active:cursor-grabbing text-[10px] text-slate-500 hover:text-slate-300 px-0.5"
+                            className="select-none cursor-grab active:cursor-grabbing inline-flex items-center justify-center h-6 w-6 rounded bg-slate-800 border border-slate-700 text-slate-400 hover:bg-slate-700 hover:text-white font-mono text-[12px] shrink-0"
                             title="Prevuci asset"
                           >
                             ⠿
-                          </span>
+                          </div>
                           {a.shape ? (
                             <span className="h-5 w-5 shrink-0 rounded border border-slate-600" style={{ background: a.shape.fill }} />
                           ) : a.gradient ? (
@@ -385,7 +420,7 @@ export default function LayersTab() {
                             {a.locked ? "🔒" : "🔓"}
                           </button>
                         </div>
-                        {belowMe && <div className="pointer-events-none absolute -bottom-0.5 left-0 right-0 z-10 h-0.5 rounded bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.8)]" />}
+                        {belowMe && <div className="pointer-events-none absolute -bottom-0.5 left-0 right-0 z-10 h-0.5 rounded bg-emerald-400 shadow-[0_0_6px_#34d399]" />}
                       </div>
                     );
                   })}
@@ -395,18 +430,23 @@ export default function LayersTab() {
                     onDragOver={(e) => onAssetEdgeDragOver(e, layer.id, "below")}
                     onDragLeave={() => setDropHint((c) => (c && c.layerId === layer.id && c.assetId === null && c.pos === "below" ? null : c))}
                     onDrop={(e) => onAssetEdgeDrop(e, layer.id, "below")}
-                    className={`mt-0.5 h-3 w-full rounded transition-colors ${
-                      dropHint?.layerId === layer.id && dropHint.assetId === null && dropHint.pos === "below" && dragKind === "asset"
-                        ? "bg-emerald-500/60"
-                        : dragKind === "asset" ? "bg-slate-800/20 hover:bg-slate-700/40" : "bg-transparent"
-                    }`}
-                  />
+                    className="relative h-3 w-full rounded hover:bg-slate-700/10"
+                  >
+                    {dropHint?.layerId === layer.id && dropHint.assetId === null && dropHint.pos === "below" && dragKind === "asset" && (
+                      <div className="pointer-events-none absolute inset-y-0 left-0 right-0 z-10 flex items-center">
+                        <div className="h-0.5 flex-1 bg-emerald-400 shadow-[0_0_6px_#34d399]" />
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
 
-              {/* Green line BELOW layer group */}
+              {/* Insertion marker line BELOW layer group */}
               {showBelowLine && (
-                <div className="pointer-events-none absolute -bottom-0.5 left-0 right-0 z-20 h-0.5 rounded bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.8)]" />
+                <div className="pointer-events-none absolute -bottom-1 left-0 right-0 z-50 flex items-center">
+                  <div className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_8px_#34d399]" />
+                  <div className="h-1 flex-1 bg-emerald-400 shadow-[0_0_8px_#34d399]" />
+                </div>
               )}
             </div>
           );
@@ -418,12 +458,15 @@ export default function LayersTab() {
         onDragOver={(e) => onLayerEdgeDragOver(e, "bottom")}
         onDragLeave={() => setDropHint((c) => (c && c.layerId === orderedLayers[orderedLayers.length - 1]?.id && c.assetId === null && c.pos === "below" ? null : c))}
         onDrop={(e) => onLayerEdgeDrop(e, "bottom")}
-        className={`mt-1 h-2 w-full rounded transition-colors ${
-          dropHint && dropHint.assetId === null && dropHint.layerId === orderedLayers[orderedLayers.length - 1]?.id && dropHint.pos === "below" && dragKind === "layer"
-            ? "bg-emerald-500"
-            : dragKind === "layer" ? "bg-transparent hover:bg-slate-800/40" : "bg-transparent"
-        }`}
-      />
+        className="relative h-2.5 w-full my-1 rounded transition-colors hover:bg-slate-800/20"
+      >
+        {dropHint && dropHint.assetId === null && dropHint.layerId === orderedLayers[orderedLayers.length - 1]?.id && dropHint.pos === "below" && dragKind === "layer" && (
+          <div className="pointer-events-none absolute inset-y-0 left-0 right-0 z-50 flex items-center">
+            <div className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_8px_#34d399]" />
+            <div className="h-1 flex-1 bg-emerald-400 shadow-[0_0_8px_#34d399]" />
+          </div>
+        )}
+      </div>
     </Panel>
   );
 }

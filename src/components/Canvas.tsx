@@ -327,7 +327,7 @@ export default function Canvas() {
           <div className="mt-1.5 border-t border-emerald-700/50 pt-1 font-mono text-[12px] text-emerald-100">Sim time: {formatRuntimeTime(simulatedSeconds)}</div>
         </div>
       )}
-      <div ref={stageRef} onPointerDown={onStageDown} className="relative origin-center shadow-2xl shadow-black/60" style={{ width: W, height: H, transform: `scale(${scale})`, background: runtimePreview ? "transparent" : data.bgColor, cursor: tool !== "select" ? "crosshair" : "default" }}>
+      <div ref={stageRef} onPointerDown={onStageDown} className="relative origin-center shadow-2xl shadow-black/60" style={{ width: W, height: H, transform: `scale(${scale})`, background: data.bgColor || "#0b1020", cursor: tool !== "select" ? "crosshair" : "default" }}>
         {/* GradientBackgroundLayer only shown in editor mode; engine renders its own gradient in runtime preview */}
         {!runtimePreview && <GradientBackgroundLayer />}
         {!runtimePreview && (
@@ -402,10 +402,8 @@ export default function Canvas() {
             </div>
           </div>
         )}
-        {/* Runtime engine wrapper: keeps absolute inset-0 positioning so engine can set its own bg on runtimeRef */}
-        <div className="absolute inset-0 overflow-hidden" style={{ display: runtimePreview ? "block" : "none" }}>
-          <div ref={runtimeRef} className="absolute inset-0" />
-        </div>
+        {/* Runtime engine wrapper */}
+        <div ref={runtimeRef} className="absolute inset-0 overflow-hidden" style={{ display: runtimePreview ? "block" : "none" }} />
       </div>
     </div>
   );
