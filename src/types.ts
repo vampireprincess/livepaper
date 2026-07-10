@@ -128,7 +128,7 @@ export interface AudioReactiveAssetConfig {
 }
 
 export type TriggerType = "click" | "dblclick" | "mouseenter" | "mouseleave" | "contextmenu" | "hold";
-export type ActionType = "sound" | "animation" | "visibility" | "particle" | "open_url";
+export type ActionType = "sound" | "animation" | "visibility" | "particle" | "open_url" | "script";
 
 export interface AssetAction {
   id: string;
@@ -139,6 +139,7 @@ export interface AssetAction {
   targetAssetId?: string;
   targetParticleId?: string;
   url?: string;
+  script?: string;
 }
 
 export interface AssetTrigger {

@@ -767,6 +767,14 @@ RuntimeEngine.prototype.executeAction=function(act, a){
   else if (act.type === "open_url" && act.url) {
     window.open(act.url, "_blank");
   }
+  else if (act.type === "script" && act.script) {
+    try {
+      var runUserScript = new Function("engine", "asset", act.script);
+      runUserScript(this, a);
+    } catch (err) {
+      console.error("Custom JS Script error:", err);
+    }
+  }
 };
 RuntimeEngine.prototype.updateParallax=function(){
   for(var id in this.assetEls){

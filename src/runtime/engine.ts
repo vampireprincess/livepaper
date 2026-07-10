@@ -854,6 +854,14 @@ export class RuntimeEngine {
     else if (act.type === "open_url" && act.url) {
       window.open(act.url, "_blank");
     }
+    else if (act.type === "script" && act.script) {
+      try {
+        const runUserScript = new Function("engine", "asset", act.script);
+        runUserScript(this, a);
+      } catch (err) {
+        console.error("Custom JS Script error:", err);
+      }
+    }
   }
 
   updateParallax() {

@@ -500,6 +500,7 @@ export default function AssetInspector() {
                                 { value: "visibility", label: "Toggle Layer Visibility" },
                                 { value: "particle", label: "Spawn Particle Burst" },
                                 { value: "open_url", label: "Open Web URL" },
+                                { value: "script", label: "Execute Custom Script" },
                               ]}
                             />
                           </Field>
@@ -581,6 +582,18 @@ export default function AssetInspector() {
                                 value={act.url || ""}
                                 onChange={(v) => updateActionParam({ url: v })}
                                 placeholder="https://example.com"
+                              />
+                            </Field>
+                          )}
+
+                          {act.type === "script" && (
+                            <Field label="Custom JS Script">
+                              <textarea
+                                rows={6}
+                                value={act.script || ""}
+                                onChange={(e) => updateActionParam({ script: e.target.value })}
+                                className="w-full rounded border border-slate-800 bg-slate-950 p-2 font-mono text-[11px] text-emerald-400 outline-none focus:ring-1 focus:ring-violet-500"
+                                placeholder="// Access 'engine' (the runtime) and 'asset' (this asset)&#10;// Example:&#10;// engine.root.style.background = 'red';&#10;// console.log(asset.name);"
                               />
                             </Field>
                           )}
