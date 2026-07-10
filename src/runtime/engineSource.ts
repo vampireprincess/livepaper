@@ -283,7 +283,15 @@ RuntimeEngine.prototype.build=function(){
       else renderGrad(child,a.gradient,0);
     } else {
     var staticMedia=a.mediaId?d.media.find(function(m){return m.id===a.mediaId;}):null;
-    if(staticMedia&&staticMedia.type==='lottie'){
+    if(staticMedia&&staticMedia.type==='widget'){
+      var iframe=document.createElement('iframe');
+      iframe.src=staticMedia.dataUrl;
+      iframe.style.width='100%'; iframe.style.height='100%';
+      iframe.style.border='none';
+      iframe.setAttribute('sandbox', 'allow-scripts allow-popups allow-forms allow-same-origin');
+      el.style.pointerEvents='auto';
+      contentEl.appendChild(iframe);
+    } else if(staticMedia&&staticMedia.type==='lottie'){
       try{
         var isData=staticMedia.dataUrl.indexOf('data:')===0;
         var la;if(isData){ la=lottie.loadAnimation({container:contentEl,renderer:'svg',loop:true,autoplay:true,animationData:JSON.parse(atob(staticMedia.dataUrl.split(',')[1]))}); }

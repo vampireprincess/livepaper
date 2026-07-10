@@ -4,6 +4,7 @@ import { uid, defaultSchedule } from "./factory";
 function detectType(file: File): MediaAsset["type"] {
   const t = file.type;
   if (file.name.endsWith(".json")) return "lottie";
+  if (file.name.endsWith(".html")) return "widget";
   if (t.includes("svg")) return "svg";
   if (t.includes("gif")) return "gif";
   if (t.includes("webp")) return "webp";
@@ -28,6 +29,10 @@ export function readFileAsMedia(file: File): Promise<MediaAsset> {
       if (type === "lottie") {
         media.width = 500;
         media.height = 500;
+        resolve(media);
+      } else if (type === "widget") {
+        media.width = 500;
+        media.height = 300;
         resolve(media);
       } else if (type === "video") {
         const v = document.createElement("video");

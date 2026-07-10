@@ -318,7 +318,15 @@ export class RuntimeEngine {
         } else renderGradient(0);
       } else {
       const staticMedia = a.mediaId ? this.data.media.find((m) => m.id === a.mediaId) : undefined;
-      if (staticMedia?.type === "lottie") {
+      if (staticMedia?.type === "widget") {
+        const iframe = document.createElement("iframe");
+        iframe.src = staticMedia.dataUrl;
+        iframe.style.width = "100%"; iframe.style.height = "100%";
+        iframe.style.border = "none";
+        iframe.setAttribute("sandbox", "allow-scripts allow-popups allow-forms allow-same-origin");
+        el.style.pointerEvents = "auto";
+        contentEl.appendChild(iframe);
+      } else if (staticMedia?.type === "lottie") {
         try {
           const isData = staticMedia.dataUrl.startsWith("data:");
           const anim = lottie.loadAnimation(isData
