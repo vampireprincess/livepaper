@@ -108,6 +108,46 @@ export interface GradientStudio {
   gradient: GradientConfig;
 }
 
+export interface ParallaxConfig {
+  enabled: boolean;
+  trigger: "mouse" | "tilt";
+  factorX: number;
+  factorY: number;
+  smoothing: number;
+}
+
+export interface AudioReactiveAssetConfig {
+  enabled: boolean;
+  frequency: "bass" | "mid" | "treble" | "full";
+  sensitivity: number;
+  smoothing: number;
+  affectScale: boolean;
+  affectRotation: boolean;
+  affectPosition: boolean;
+  affectOpacity: boolean;
+}
+
+export type TriggerType = "click" | "dblclick" | "mouseenter" | "mouseleave" | "contextmenu" | "hold";
+export type ActionType = "sound" | "animation" | "visibility" | "particle" | "open_url" | "script";
+
+export interface AssetAction {
+  id: string;
+  type: ActionType;
+  soundMediaId?: string;
+  volume?: number;
+  animationName?: string;
+  targetAssetId?: string;
+  targetParticleId?: string;
+  url?: string;
+  script?: string;
+}
+
+export interface AssetTrigger {
+  id: string;
+  type: TriggerType;
+  actions: AssetAction[];
+}
+
 export interface CanvasAsset {
   id: string;
   mediaId?: string;
@@ -138,6 +178,9 @@ export interface CanvasAsset {
   exitDuration?: number;
   refPointX?: number;
   refPointY?: number;
+  parallax?: ParallaxConfig;
+  audioReactive?: AudioReactiveAssetConfig;
+  interactiveEvents?: AssetTrigger[];
 }
 
 export interface Layer {
@@ -221,6 +264,16 @@ export type ParticleType = "rain" | "snow" | "leaves" | "dust" | "sparkle" | "fo
 
 export type ParticleColorMode = "solid" | "global" | "individual" | "per-particle";
 
+export interface ParticleAudioReactiveConfig {
+  enabled: boolean;
+  frequency: "bass" | "mid" | "treble" | "full";
+  sensitivity: number;
+  smoothing: number;
+  affectSize: boolean;
+  affectSpeed: boolean;
+  affectOpacity: boolean;
+}
+
 export interface ParticleSystem {
   id: string;
   name: string;
@@ -242,6 +295,7 @@ export interface ParticleSystem {
   customMediaIds: string[];
   includeZoneIds: string[];
   excludeZoneIds: string[];
+  audioReactive?: ParticleAudioReactiveConfig;
 }
 
 export interface DayNightConfig {
@@ -297,6 +351,6 @@ export interface Project {
   data: ProjectData;
 }
 
-export type EditorTab = "assets" | "layers" | "random" | "paths" | "zones" | "particles" | "shapes" | "lottie" | "svg" | "gradient" | "audio" | "debug" | "export";
+export type EditorTab = "assets" | "layers" | "random" | "paths" | "zones" | "particles" | "shapes" | "lottie" | "svg" | "gradient" | "code" | "debug" | "export";
 
 export type CanvasTool = "select" | "path" | "zone-rect" | "zone-ellipse" | "zone-poly" | "zone-triangle" | "shape-rect" | "shape-ellipse" | "shape-triangle" | "shape-line";

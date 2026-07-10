@@ -39,7 +39,7 @@ export default function AssetsTab() {
   return (
     <div className="space-y-2">
       <Panel title="Quick Upload">
-        <input ref={inputRef} type="file" accept="image/*,video/*,.svg,.gif,.webp,.json" multiple hidden onChange={(e) => onUpload(e.target.files)} />
+        <input ref={inputRef} type="file" accept="image/*,video/*,.svg,.gif,.webp,.json,.html" multiple hidden onChange={(e) => onUpload(e.target.files)} />
         <Select
           value={quickLayerId}
           onChange={setQuickLayerId}

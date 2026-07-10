@@ -1,8 +1,8 @@
 import { useState, useEffect } from "react";
 import { useStore } from "../../store";
 import { newParticle, uid } from "../../factory";
-import { Btn, EmptyHint, Panel, Select } from "../ui";
-import type { ParticleType, ParticleSystem } from "../../types";
+import { Btn, EmptyHint, Panel, Select, Toggle, Slider } from "../ui";
+import type { ParticleType, ParticleSystem, AudioReactiveConfig } from "../../types";
 
 const PRESETS: { type: ParticleType; label: string; emoji: string }[] = [
   { type: "snow", label: "Snow", emoji: "❄️" },

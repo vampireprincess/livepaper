@@ -186,6 +186,10 @@ function RuntimeEngine(root, data, opts){
   this.imgCache={}; this.dirState={}; this.bgRotEls=[]; this.bgRotIndex=0; this.running=false; this.lastTs=0;
   this.startTime=0; this.audioLevel=0;
   this.spawnCounts={}; this.mediaTimers={}; this.mediaNextSpawnAt={}; this.mediaInterval={};
+  this.mouseX = 0; this.mouseY = 0; this.tiltX = 0; this.tiltY = 0;
+  this.assetEls = {}; this.parallaxOffsets = {};
+  this.audioBandLevels = { bass: 0, mid: 0, treble: 0, full: 0 };
+  this.audioReactiveStates = {};
   this.timeScaleValue=Math.max(0.1, this.opts.timeScale || (this.opts.simulateFast ? 10 : 1)); this.realBaseTime=0; this.simBaseTime=0;
   this.build();
 }
@@ -203,10 +207,13 @@ RuntimeEngine.prototype.elapsedSec=function(){
 };
 RuntimeEngine.prototype.build=function(){
   var d=this.data, root=this.root, self=this;
+  self.assetEls={};
   root.innerHTML='';
   var _computedPos=window.getComputedStyle(root).position;
-  var _isAbsolute=_computedPos==='absolute'||_computedPos==='fixed';
-  if(!_isAbsolute){root.style.position='relative'; root.style.width=d.canvasWidth+'px'; root.style.height=d.canvasHeight+'px';}
+  var _isAbsolute=_computedPos==='absolute'||_computedPos==='fixed'||root.classList.contains('absolute');
+  if(!_isAbsolute){root.style.position='relative';}
+  root.style.width=d.canvasWidth+'px';
+  root.style.height=d.canvasHeight+'px';
   root.style.overflow='hidden';
   var studio=d.gradientStudio;
   // Mode selector removed: any gradient with stops renders as background (hybrid-style).
@@ -251,8 +258,20 @@ RuntimeEngine.prototype.build=function(){
         var s2=a.shadow; el.style.filter='drop-shadow('+s2.offsetX+'px '+s2.offsetY+'px '+s2.blur+'px '+s2.color+')';
       }
     }
+    var contentEl = document.createElement('div');
+    contentEl.style.width = '100%'; contentEl.style.height = '100%';
+    contentEl.style.position = 'relative';
+    el.appendChild(contentEl);
+
+    layerEl.appendChild(el);
+    self.assetEls[a.id]={ el: el, contentEl: contentEl, data: a };
+    if (a.interactiveEvents && a.interactiveEvents.length > 0) {
+      el.style.pointerEvents = "auto";
+      el.style.cursor = "pointer";
+      self.bindInteractiveEvents(el, a);
+    }
     if(a.gradient){
-      var child=document.createElement('div'); child.style.width='100%'; child.style.height='100%'; el.appendChild(child);
+      var child=document.createElement('div'); child.style.width='100%'; child.style.height='100%'; contentEl.appendChild(child);
       var renderGrad=function(elm,gg,elapsed){
         if(!gg.animate){elm.style.backgroundImage=_gradientCss(gg.type,gg.angle,gg.stops,0); elm.style.backgroundSize='100% 100%'; elm.style.backgroundPosition='0% 50%'; return;}
         var an=_computeGradAnim(gg,elapsed); var at=gg.animType||(gg.type==='linear'?'rotation':'hue');
@@ -264,18 +283,25 @@ RuntimeEngine.prototype.build=function(){
       else renderGrad(child,a.gradient,0);
     } else {
     var staticMedia=a.mediaId?d.media.find(function(m){return m.id===a.mediaId;}):null;
-    if(staticMedia&&staticMedia.type==='lottie'){
+    if(staticMedia&&staticMedia.type==='widget'){
+      var iframe=document.createElement('iframe');
+      iframe.src=staticMedia.dataUrl;
+      iframe.style.width='100%'; iframe.style.height='100%';
+      iframe.style.border='none';
+      iframe.setAttribute('sandbox', 'allow-scripts allow-popups allow-forms allow-same-origin');
+      el.style.pointerEvents='auto';
+      contentEl.appendChild(iframe);
+    } else if(staticMedia&&staticMedia.type==='lottie'){
       try{
         var isData=staticMedia.dataUrl.indexOf('data:')===0;
-        var la;if(isData){ la=lottie.loadAnimation({container:el,renderer:'svg',loop:true,autoplay:true,animationData:JSON.parse(atob(staticMedia.dataUrl.split(',')[1]))}); }
-        else { la=lottie.loadAnimation({container:el,renderer:'svg',loop:true,autoplay:true,path:staticMedia.dataUrl}); }
+        var la;if(isData){ la=lottie.loadAnimation({container:contentEl,renderer:'svg',loop:true,autoplay:true,animationData:JSON.parse(atob(staticMedia.dataUrl.split(',')[1]))}); }
+        else { la=lottie.loadAnimation({container:contentEl,renderer:'svg',loop:true,autoplay:true,path:staticMedia.dataUrl}); }
         la.addEventListener('complete',function(){la.goToAndPlay(0,true);}); setInterval(function(){if(el.isConnected&&la.isPaused)la.play();},1000);
       }catch(e){ console.warn('Lottie runtime error',e); }
     } else {
-      el.innerHTML=self.assetMarkup(a);
+      contentEl.innerHTML=self.assetMarkup(a);
     }
     }
-    layerEl.appendChild(el);
   });
   this.particleCanvas=document.createElement('canvas');
   this.particleCanvas.width=d.canvasWidth; this.particleCanvas.height=d.canvasHeight;
@@ -298,10 +324,11 @@ RuntimeEngine.prototype.build=function(){
   if(d.dayNight.enabled) root.appendChild(this.nightEl);
 };
 RuntimeEngine.prototype.applyGradientBackground=function(g){
+  this.root.style.background=""; // Clear background shorthand to avoid browser inline style conflicts
   this.curBgGrad=g; this.renderBgGradient(g.angle);
   this.root.style.backgroundSize=(g.type==='linear')?'220% 220%':'100% 100%';
   this.root.style.backgroundPosition='0% 50%';
-  this.root.style.backgroundColor='transparent';
+  this.root.style.backgroundColor=this.data.bgColor || '#0b1020';
 };
 RuntimeEngine.prototype.renderBgGradient=function(angle,hueShift){
   var g=this.curBgGrad; if(!g)return;
@@ -369,14 +396,45 @@ RuntimeEngine.prototype.updateParticles=function(dt){
   var globalExcl=this.globalExcludeIds();
   var studioGrad=this.studioGradient();
   var gradAnim=studioGrad?_computeGradAnim(studioGrad, this.elapsedSec()):null;
-  var ar=this.data.audioReactive, level=ar&&ar.enabled?this.audioLevel:0;
-  var sens=ar?ar.sensitivity/5:1, sMul=ar&&ar.enabled&&ar.affectSize?1+level*sens*1.5:1;
-  var spMul=ar&&ar.enabled&&ar.affectSpeed?1+level*sens*2:1, oMul=ar&&ar.enabled&&ar.affectOpacity?Math.min(1.5,0.5+level*sens*1.5):1;
   for(var i=0;i<this.data.particles.length;i++){
     var ps=this.data.particles[i]; if(!ps.enabled) continue;
     var arr=this.particleState[ps.id]; if(!arr) continue;
     var exclAll=ps.excludeZoneIds.concat(globalExcl);
     var imgs=ps.customMediaIds.map(function(id){return self.getImg(id);});
+
+    // Compute individual audio multipliers for this particle system
+    var sMul = 1;
+    var spMul = 1;
+    var oMul = 1;
+
+    if (ps.audioReactive && ps.audioReactive.enabled) {
+      var cfg = ps.audioReactive;
+      var band = cfg.frequency || "bass";
+      var instantVal = this.audioBandLevels[band] || 0;
+      var targetRaw = instantVal * (cfg.sensitivity !== undefined ? cfg.sensitivity : 5);
+
+      var state = this.particleAudioStates[ps.id] || (this.particleAudioStates[ps.id] = { curLevel: 0 });
+      var smoothing = cfg.smoothing !== undefined ? cfg.smoothing : 0.7;
+      var lerpFactor = 1 - smoothing;
+      state.curLevel += (targetRaw - state.curLevel) * lerpFactor;
+
+      var level = state.curLevel;
+
+      if (cfg.affectSize) sMul = 1 + level * 1.5;
+      if (cfg.affectSpeed) spMul = 1 + level * 2;
+      if (cfg.affectOpacity) oMul = Math.min(1.5, 0.5 + level * 1.5);
+    } else {
+      // Fallback to legacy global audio reactive if present and active
+      var ar = this.data.audioReactive;
+      if (ar && ar.enabled) {
+        var sens = ar.sensitivity / 5;
+        var level = this.audioLevel;
+        if (ar.affectSize) sMul = 1 + level * sens * 1.5;
+        if (ar.affectSpeed) spMul = 1 + level * sens * 2;
+        if (ar.affectOpacity) oMul = Math.min(1.5, 0.5 + level * sens * 1.5);
+      }
+    }
+
     for(var j=0;j<arr.length;j++){
       var p=arr[j]; p.phase+=p.phaseSpeed*dt;
       if(ps.type==='fireflies'){
@@ -606,18 +664,190 @@ RuntimeEngine.prototype.loop=function(ts){
       else if(animType==='hue') this.renderBgGradient(bgG.angle, anim.hueShift);
       else this.renderBgGradient(anim.angle);
     }
-    if(this.data.audioReactive&&this.data.audioReactive.enabled) this.updateAudio();
+    this.updateParallax();
+    var hasAudioAssets = this.data.assets.some(function(a){return a.audioReactive&&a.audioReactive.enabled;});
+    if((this.data.audioReactive&&this.data.audioReactive.enabled) || hasAudioAssets) this.updateAudio();
+    this.updateAudioReactiveAssets(dt);
     this.updateParticles(dt*this.timeScale()); this.updateEvents(ts); this.updateDayNight(this.scaledNow(ts));
     this.checkMediaSpawns(ts);
   }catch(e){console.error('Runtime loop error',e);}finally{
     var self=this; this.raf=requestAnimationFrame(function(t){self.loop(t);});
   }
 };
+RuntimeEngine.prototype.onMouseMove=function(e){
+  this.mouseX=(e.clientX/window.innerWidth)*2-1;
+  this.mouseY=(e.clientY/window.innerHeight)*2-1;
+};
+RuntimeEngine.prototype.onDeviceOrientation=function(e){
+  var b=e.beta||0; var g=e.gamma||0;
+  this.tiltX=Math.max(-1,Math.min(1,g/30));
+  this.tiltY=Math.max(-1,Math.min(1,b/30));
+};
+RuntimeEngine.prototype.bindInteractiveEvents=function(el, a){
+  var self=this;
+  el.addEventListener("click", function(e){
+    e.stopPropagation();
+    self.triggerActionsForEvent(a, "click");
+  });
+  el.addEventListener("dblclick", function(e){
+    e.stopPropagation();
+    self.triggerActionsForEvent(a, "dblclick");
+  });
+  el.addEventListener("mouseenter", function(e){
+    e.stopPropagation();
+    self.triggerActionsForEvent(a, "mouseenter");
+  });
+  el.addEventListener("mouseleave", function(e){
+    e.stopPropagation();
+    self.triggerActionsForEvent(a, "mouseleave");
+  });
+  el.addEventListener("contextmenu", function(e){
+    e.preventDefault();
+    e.stopPropagation();
+    self.triggerActionsForEvent(a, "contextmenu");
+  });
+
+  var holdTimer = null;
+  el.addEventListener("mousedown", function(e){
+    e.stopPropagation();
+    holdTimer = setTimeout(function(){
+      self.triggerActionsForEvent(a, "hold");
+    }, 800);
+  });
+  el.addEventListener("mouseup", function(){ clearTimeout(holdTimer); });
+  el.addEventListener("mouseleave", function(){ clearTimeout(holdTimer); });
+};
+RuntimeEngine.prototype.triggerActionsForEvent=function(a, type){
+  var self=this;
+  var trigger = a.interactiveEvents && a.interactiveEvents.find(function(t){return t.type === type;});
+  if (!trigger) return;
+  trigger.actions.forEach(function(act){
+    self.executeAction(act, a);
+  });
+};
+RuntimeEngine.prototype.executeAction=function(act, a){
+  var self=this;
+  if (act.type === "sound" && act.soundMediaId) {
+    var url = this.mediaMap[act.soundMediaId];
+    if (url) {
+      var audio = new Audio(url);
+      audio.volume = act.volume !== undefined ? act.volume : 0.8;
+      audio.play().catch(function(e){ console.warn("Sound play failed", e); });
+    }
+  }
+  else if (act.type === "animation" && act.animationName) {
+    var targetItem = this.assetEls[a.id];
+    if (targetItem) {
+      var contentEl = targetItem.contentEl;
+      contentEl.style.transform = "none";
+      var name = act.animationName;
+      var originalAnim = a.animation;
+      var originalSpeed = a.animSpeed;
+      a.animation = name;
+      a.animSpeed = 3;
+      setTimeout(function(){
+        a.animation = originalAnim || "none";
+        a.animSpeed = originalSpeed !== undefined ? originalSpeed : 1;
+        contentEl.style.transform = "none";
+      }, 1200);
+    }
+  }
+  else if (act.type === "visibility" && act.targetAssetId) {
+    var targetItem = this.assetEls[act.targetAssetId];
+    if (targetItem) {
+      var visible = targetItem.el.style.display !== "none";
+      targetItem.el.style.display = visible ? "none" : "block";
+    }
+  }
+  else if (act.type === "particle" && act.targetParticleId) {
+    var ps = this.data.particles.find(function(p){return p.id === act.targetParticleId;});
+    var arr = this.particleState[act.targetParticleId];
+    if (ps && arr) {
+      var nImgs = ps.customMediaIds.length || 1;
+      for (var k = 0; k < 30; k++) {
+        var p = this.spawnParticle(ps, k % nImgs, false);
+        p.x = a.x + a.width / 2 + (Math.random() - 0.5) * 100;
+        p.y = a.y + a.height / 2 + (Math.random() - 0.5) * 100;
+        arr.push(p);
+      }
+    }
+  }
+  else if (act.type === "open_url" && act.url) {
+    window.open(act.url, "_blank");
+  }
+  else if (act.type === "script" && act.script) {
+    try {
+      var runUserScript = new Function("engine", "asset", act.script);
+      runUserScript(this, a);
+    } catch (err) {
+      console.error("Custom JS Script error:", err);
+    }
+  }
+};
+RuntimeEngine.prototype.updateParallax=function(){
+  for(var id in this.assetEls){
+    var item=this.assetEls[id];
+    var a=item.data;
+    var el=item.el;
+    if(a.parallax&&a.parallax.enabled){
+      var trigger=a.parallax.trigger||'mouse';
+      var valX=trigger==='mouse'?this.mouseX:this.tiltX;
+      var valY=trigger==='mouse'?this.mouseY:this.tiltY;
+      var targetX=valX*(a.parallax.factorX!==undefined?a.parallax.factorX:20);
+      var targetY=valY*(a.parallax.factorY!==undefined?a.parallax.factorY:20);
+      var state=this.parallaxOffsets[a.id]||(this.parallaxOffsets[a.id]={curX:0,curY:0});
+      var smoothing=a.parallax.smoothing!==undefined?a.parallax.smoothing:0.1;
+      state.curX+=(targetX-state.curX)*smoothing;
+      state.curY+=(targetY-state.curY)*smoothing;
+      el.style.left=(a.x+state.curX)+'px';
+      el.style.top=(a.y+state.curY)+'px';
+    }
+  }
+};
+RuntimeEngine.prototype.getBandInstantLevel=function(band){
+  if(!this.analyser||!this.audioData)return 0;
+  var len=this.audioData.length; if(len===0)return 0;
+  var start=0, end=len;
+  if(band==='bass'){ start=0; end=Math.max(1,Math.round(len*0.12)); }
+  else if(band==='mid'){ start=Math.round(len*0.12); end=Math.round(len*0.5); }
+  else if(band==='treble'){ start=Math.round(len*0.5); end=len; }
+  var sum=0;for(var i=start;i<end;i++)sum+=this.audioData[i];
+  return sum/(end-start)/255;
+};
 RuntimeEngine.prototype.updateAudio=function(){
   if(!this.analyser||!this.audioData)return; this.analyser.getByteFrequencyData(this.audioData);
   var sum=0;for(var i=0;i<this.audioData.length;i++)sum+=this.audioData[i];
-  var instant=sum/this.audioData.length/255, smoothing=this.data.audioReactive.smoothing||0.7;
-  this.audioLevel=this.audioLevel*smoothing+instant*(1-smoothing);
+  var instantGlobal=sum/this.audioData.length/255;
+  var globalSmoothing=(this.data.audioReactive&&this.data.audioReactive.smoothing!==undefined)?this.data.audioReactive.smoothing:0.7;
+  this.audioLevel=this.audioLevel*globalSmoothing+instantGlobal*(1-globalSmoothing);
+  var bands=['bass','mid','treble','full']; var self=this;
+  bands.forEach(function(b){ self.audioBandLevels[b]=self.getBandInstantLevel(b); });
+};
+RuntimeEngine.prototype.updateAudioReactiveAssets=function(dt){
+  for(var id in this.assetEls){
+    var item=this.assetEls[id];
+    var a=item.data;
+    var contentEl=item.contentEl;
+    if(a.audioReactive&&a.audioReactive.enabled){
+      var cfg=a.audioReactive;
+      var band=cfg.frequency||'bass';
+      var instantVal=this.audioBandLevels[band]||0;
+      var targetRaw=instantVal*(cfg.sensitivity!==undefined?cfg.sensitivity:5);
+      var state=this.audioReactiveStates[a.id]||(this.audioReactiveStates[a.id]={curLevel:0});
+      var smoothing=cfg.smoothing!==undefined?cfg.smoothing:0.5;
+      var lerpFactor=1-smoothing;
+      state.curLevel+=(targetRaw-state.curLevel)*lerpFactor;
+      var curLevel=state.curLevel;
+      var s=cfg.affectScale?(1+curLevel*0.15):1;
+      var r=cfg.affectRotation?(curLevel*12):0;
+      var y=cfg.affectPosition?(-curLevel*30):0;
+      contentEl.style.transform='translateY('+y+'px) scale('+s+') rotate('+r+'deg)';
+      contentEl.style.opacity=cfg.affectOpacity?String(Math.max(0.1,1-curLevel*0.8)):'1';
+    } else if(contentEl){
+      contentEl.style.transform='none';
+      contentEl.style.opacity='1';
+    }
+  }
 };
 RuntimeEngine.prototype.initAudio=function(){
   var self=this;
@@ -630,13 +860,22 @@ RuntimeEngine.prototype.start=function(){
   if(this.running) return; this.running=true; this.startTime=performance.now(); this.realBaseTime=this.startTime; this.simBaseTime=this.startTime; this.lastTs=0;
   var self=this; this.raf=requestAnimationFrame(function(t){self.loop(t);});
   this.scheduleGroups(); this.startBgRotation();
-  if(this.data.audioReactive&&this.data.audioReactive.enabled) this.initAudio();
+  var hasAudioAssets = this.data.assets.some(function(a){return a.audioReactive&&a.audioReactive.enabled;});
+  if((this.data.audioReactive&&this.data.audioReactive.enabled) || hasAudioAssets) this.initAudio();
+  this.onMouseMoveBound=function(e){self.onMouseMove(e);};
+  this.onDeviceOrientationBound=function(e){self.onDeviceOrientation(e);};
+  window.addEventListener('mousemove', this.onMouseMoveBound);
+  window.addEventListener('deviceorientation', this.onDeviceOrientationBound);
 };
 RuntimeEngine.prototype.stop=function(){
   this.running=false; cancelAnimationFrame(this.raf);
   if(this.audioCtx)this.audioCtx.close(); clearInterval(this.bgRotTimer);
   this.activeEvents.forEach(function(e){e.el.remove();}); this.activeEvents=[];
   this.mediaNextSpawnAt={}; this.mediaInterval={};
+  if (this.onMouseMoveBound) {
+    window.removeEventListener('mousemove', this.onMouseMoveBound);
+    window.removeEventListener('deviceorientation', this.onDeviceOrientationBound);
+  }
 };
 RuntimeEngine.prototype.destroy=function(){this.stop();this.root.innerHTML='';};
 `;

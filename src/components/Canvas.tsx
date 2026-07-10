@@ -106,7 +106,10 @@ export default function Canvas() {
   }, [scale]);
 
   const onAssetPointerDown = (e: React.PointerEvent, a: CanvasAsset) => {
-    if (a.locked || runtimePreview || isHardLockMode) { e.stopPropagation(); return; }
+    const media = data?.media.find(m => m.id === a.mediaId);
+    const isWidget = media?.type === "widget";
+    const isAllowedByTab = (tab === "code" && isWidget) || (tab !== "code" && !isWidget);
+    if (a.locked || runtimePreview || isHardLockMode || !isAllowedByTab) { e.stopPropagation(); return; }
     e.stopPropagation(); (e.target as HTMLElement).setPointerCapture(e.pointerId);
     const st = useStore.getState();
     if (e.altKey) {
@@ -302,7 +305,16 @@ export default function Canvas() {
   const selAsset = selKind === "asset" ? data.assets.find((a) => a.id === selId) : undefined;
   const layerOrder = Object.fromEntries(data.layers.map((l, i) => [l.id, i]));
   const layerLocked = Object.fromEntries(data.layers.map((l) => [l.id, !!l.locked]));
-  const selectableSelIds = isHardLockMode ? [] : selIds.filter((id) => { const a = data.assets.find(x => x.id === id); return a && !a.locked && !layerLocked[a.layerId]; });
+  const selectableSelIds = isHardLockMode ? [] : selIds.filter((id) => {
+    const a = data.assets.find(x => x.id === id);
+    if (!a) return false;
+    const m = data.media.find(x => x.id === a.mediaId);
+    const isWidget = m?.type === "widget";
+    const allowed = !a.locked && !layerLocked[a.layerId] && (
+      (tab === "code" && isWidget) || (tab !== "code" && !isWidget)
+    );
+    return allowed;
+  });
 
   return (
     <div ref={containerRef} className="relative flex h-full w-full items-center justify-center overflow-auto bg-[#0a0e1a] bg-[radial-gradient(circle_at_1px_1px,rgba(255,255,255,0.05)_1px,transparent_0)] [background-size:24px_24px]">
@@ -327,7 +339,7 @@ export default function Canvas() {
           <div className="mt-1.5 border-t border-emerald-700/50 pt-1 font-mono text-[12px] text-emerald-100">Sim time: {formatRuntimeTime(simulatedSeconds)}</div>
         </div>
       )}
-      <div ref={stageRef} onPointerDown={onStageDown} className="relative origin-center shadow-2xl shadow-black/60" style={{ width: W, height: H, transform: `scale(${scale})`, background: runtimePreview ? "transparent" : data.bgColor, cursor: tool !== "select" ? "crosshair" : "default" }}>
+      <div ref={stageRef} onPointerDown={onStageDown} className="relative origin-center shadow-2xl shadow-black/60" style={{ width: W, height: H, transform: `scale(${scale})`, background: data.bgColor || "#0b1020", cursor: tool !== "select" ? "crosshair" : "default" }}>
         {/* GradientBackgroundLayer only shown in editor mode; engine renders its own gradient in runtime preview */}
         {!runtimePreview && <GradientBackgroundLayer />}
         {!runtimePreview && (
@@ -341,7 +353,9 @@ export default function Canvas() {
                   {layerAssets.map((a) => {
                     const media = data.media.find((m) => m.id === a.mediaId);
                     const isBgLayerAndMultiSelected = layer.id === "layer-bg" && selectableSelIds.length > 1 && selectableSelIds.includes(a.id);
-                    const interactive = !isHardLockMode && tool === "select" && !a.locked && layer.locked !== true && !isBgLayerAndMultiSelected;
+                    const isWidget = media?.type === "widget";
+                    const isAllowedByTab = (tab === "code" && isWidget) || (tab !== "code" && !isWidget);
+                    const interactive = !isHardLockMode && tool === "select" && !a.locked && layer.locked !== true && !isBgLayerAndMultiSelected && isAllowedByTab;
                     const renderZ = (layerOrder[layer.id] ?? 0) * 1000 + (a.zoffset ?? 0) + 10;
                     return <AssetView key={a.id} a={a} media={media} renderZ={renderZ} interactive={interactive} ringed={selectableSelIds.includes(a.id) && a.id !== selId} onPointerDown={(e) => interactive && onAssetPointerDown(e, a)} />;
                   })}
@@ -402,10 +416,8 @@ export default function Canvas() {
             </div>
           </div>
         )}
-        {/* Runtime engine wrapper: keeps absolute inset-0 positioning so engine can set its own bg on runtimeRef */}
-        <div className="absolute inset-0 overflow-hidden" style={{ display: runtimePreview ? "block" : "none" }}>
-          <div ref={runtimeRef} className="absolute inset-0" />
-        </div>
+        {/* Runtime engine wrapper */}
+        <div ref={runtimeRef} className="absolute inset-0 overflow-hidden" style={{ display: runtimePreview ? "block" : "none" }} />
       </div>
     </div>
   );
@@ -480,7 +492,7 @@ function AssetView({ a, media, renderZ, interactive, ringed, onPointerDown }: { 
   }, [a.animation, a.animSpeed, a.rotation, sx, sy, baseFilter]);
   return (
     <div ref={ref} onPointerDown={onPointerDown} className={`absolute select-none overflow-hidden ${ringed ? "ring-2 ring-violet-500/50" : ""}`} style={{ left: a.x, top: a.y, width: a.width, height: a.height, zIndex: renderZ, opacity: a.opacity, mixBlendMode: a.blend === "add" ? "plus-lighter" : a.blend, transformOrigin: `${(a.refPointX ?? 0.5) * 100}% ${(a.refPointY ?? 0.5) * 100}%`, cursor: interactive ? "move" : "default", pointerEvents: interactive ? "auto" : "none", filter: baseFilter || undefined }}>
-      {a.gradient ? <GradientAssetView a={a} /> : a.shape ? <ShapeView shape={a.shape} /> : media?.type === "lottie" ? <LottieView dataUrl={media.dataUrl} /> : media?.type === "video" ? <video src={media.dataUrl} autoPlay loop muted playsInline referrerPolicy="no-referrer" className="h-full w-full" style={{ objectFit: fitToCss(a.fit) }} /> : <img src={media?.dataUrl} draggable={false} referrerPolicy="no-referrer" className="h-full w-full" style={{ objectFit: fitToCss(a.fit) }} onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.parentElement!.style.background = '#ef4444'; e.currentTarget.parentElement!.style.display = 'flex'; e.currentTarget.parentElement!.style.alignItems = 'center'; e.currentTarget.parentElement!.style.justifyContent = 'center'; e.currentTarget.parentElement!.innerText = 'Broken Image'; }} />}
+      {a.gradient ? <GradientAssetView a={a} /> : a.shape ? <ShapeView shape={a.shape} /> : media?.type === "widget" ? <iframe src={media.dataUrl} sandbox="allow-scripts allow-popups" className="h-full w-full border-none pointer-events-none" /> : media?.type === "lottie" ? <LottieView dataUrl={media.dataUrl} /> : media?.type === "video" ? <video src={media.dataUrl} autoPlay loop muted playsInline referrerPolicy="no-referrer" className="h-full w-full" style={{ objectFit: fitToCss(a.fit) }} /> : <img src={media?.dataUrl} draggable={false} referrerPolicy="no-referrer" className="h-full w-full" style={{ objectFit: fitToCss(a.fit) }} onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.parentElement!.style.background = '#ef4444'; e.currentTarget.parentElement!.style.display = 'flex'; e.currentTarget.parentElement!.style.alignItems = 'center'; e.currentTarget.parentElement!.style.justifyContent = 'center'; e.currentTarget.parentElement!.innerText = 'Broken Image'; }} />}
     </div>
   );
 }

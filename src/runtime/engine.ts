@@ -173,6 +173,15 @@ export class RuntimeEngine {
   spawnCounts: Record<string, { total: number; hour: number; day: number; week: number; lastHour: number; lastDay: number; lastWeek: number }> = {};
   dirState: Record<string, boolean> = {}; imgCache: Record<string, HTMLImageElement> = {};
   mediaInterval: Record<string, number> = {};
+  mouseX = 0;
+  mouseY = 0;
+  tiltX = 0;
+  tiltY = 0;
+  assetEls: Record<string, { el: HTMLDivElement; contentEl: HTMLDivElement; data: any }> = {};
+  parallaxOffsets: Record<string, { curX: number; curY: number }> = {};
+  audioBandLevels = { bass: 0, mid: 0, treble: 0, full: 0 };
+  audioReactiveStates: Record<string, { curLevel: number }> = {};
+  particleAudioStates: Record<string, { curLevel: number }> = {};
   private timeScaleValue = 1;
   private realBaseTime = 0;
   private simBaseTime = 0;
@@ -206,18 +215,19 @@ export class RuntimeEngine {
 
   build() {
     this.root.innerHTML = "";
+    this.assetEls = {};
     // Check the *computed* position to detect whether this root is already
     // absolutely positioned by CSS (editor preview wrapper).  If so, leave it
     // alone so it continues to fill its wrapper via inset:0.
     // For standalone use (exported HTML) the div has no CSS class, so computed
     // position is "static" and we fall back to "relative" + explicit dimensions.
     const computedPos = window.getComputedStyle(this.root).position;
-    const isAbsolute = computedPos === "absolute" || computedPos === "fixed";
+    const isAbsolute = computedPos === "absolute" || computedPos === "fixed" || this.root.classList.contains("absolute");
     if (!isAbsolute) {
       this.root.style.position = "relative";
-      this.root.style.width = this.data.canvasWidth + "px";
-      this.root.style.height = this.data.canvasHeight + "px";
     }
+    this.root.style.width = this.data.canvasWidth + "px";
+    this.root.style.height = this.data.canvasHeight + "px";
     this.root.style.overflow = "hidden";
 
     const studio = this.data.gradientStudio;
@@ -273,10 +283,25 @@ export class RuntimeEngine {
         const s = a.shadow; const sh = `drop-shadow(${s.offsetX}px ${s.offsetY}px ${s.blur}px ${s.color})`;
         el.style.filter = a.animation === "blur" ? el.style.filter + " " + sh : sh;
       }
+
+      const contentEl = document.createElement("div");
+      contentEl.style.width = "100%"; contentEl.style.height = "100%";
+      contentEl.style.position = "relative";
+      el.appendChild(contentEl);
+
+      layerEl.appendChild(el);
+      this.assetEls[a.id] = { el, contentEl, data: a };
+
+      if (a.interactiveEvents && a.interactiveEvents.length > 0) {
+        el.style.pointerEvents = "auto";
+        el.style.cursor = "pointer";
+        this.bindInteractiveEvents(el, a);
+      }
+
       if (a.gradient) {
         const child = document.createElement("div");
         child.style.width = "100%"; child.style.height = "100%";
-        el.appendChild(child);
+        contentEl.appendChild(child);
         const renderGradient = (elapsed: number) => {
           const gg = a.gradient!;
           if (!gg.animate) { child.style.backgroundImage = gradientCss(gg.type, gg.angle, gg.stops); child.style.backgroundSize = "100% 100%"; child.style.backgroundPosition = "0% 50%"; return; }
@@ -293,20 +318,27 @@ export class RuntimeEngine {
         } else renderGradient(0);
       } else {
       const staticMedia = a.mediaId ? this.data.media.find((m) => m.id === a.mediaId) : undefined;
-      if (staticMedia?.type === "lottie") {
+      if (staticMedia?.type === "widget") {
+        const iframe = document.createElement("iframe");
+        iframe.src = staticMedia.dataUrl;
+        iframe.style.width = "100%"; iframe.style.height = "100%";
+        iframe.style.border = "none";
+        iframe.setAttribute("sandbox", "allow-scripts allow-popups allow-forms allow-same-origin");
+        el.style.pointerEvents = "auto";
+        contentEl.appendChild(iframe);
+      } else if (staticMedia?.type === "lottie") {
         try {
           const isData = staticMedia.dataUrl.startsWith("data:");
           const anim = lottie.loadAnimation(isData
-            ? { container: el, renderer: "svg", loop: true, autoplay: true, animationData: JSON.parse(atob(staticMedia.dataUrl.split(",")[1])) }
-            : { container: el, renderer: "svg", loop: true, autoplay: true, path: staticMedia.dataUrl });
+            ? { container: contentEl, renderer: "svg", loop: true, autoplay: true, animationData: JSON.parse(atob(staticMedia.dataUrl.split(",")[1])) }
+            : { container: contentEl, renderer: "svg", loop: true, autoplay: true, path: staticMedia.dataUrl });
           anim.addEventListener("complete", () => anim.goToAndPlay(0, true));
           window.setInterval(() => { if (el.isConnected && anim.isPaused) anim.play(); }, 1000);
         } catch (e) { console.warn("Lottie runtime error", e); }
       } else {
-        el.innerHTML = this.assetMarkup(a);
+        contentEl.innerHTML = this.assetMarkup(a);
       }
       }
-      layerEl.appendChild(el);
     }
 
     this.particleCanvas = document.createElement("canvas");
@@ -335,12 +367,13 @@ export class RuntimeEngine {
 
   private curBgGrad?: GradientConfig;
   applyGradientBackground(g: GradientConfig) {
+    this.root.style.background = ""; // Clear background shorthand to avoid browser inline style conflicts
     this.curBgGrad = g;
     // render first then set size/position so size is not reset by background shorthand
     this.renderBgGradient(g.angle);
     this.root.style.backgroundSize = g.type === "linear" ? "220% 220%" : "100% 100%";
     this.root.style.backgroundPosition = "0% 50%";
-    this.root.style.backgroundColor = "transparent";
+    this.root.style.backgroundColor = this.data.bgColor || "#0b1020";
   }
 
   private renderBgGradient(angle: number, hueShift = 0) {
@@ -413,9 +446,6 @@ export class RuntimeEngine {
   updateParticles(dt: number) {
     const ctx = this.pctx!; ctx.clearRect(0, 0, this.data.canvasWidth, this.data.canvasHeight);
     const W = this.data.canvasWidth, H = this.data.canvasHeight, globalExcl = this.globalExcludeIds();
-    const ar = this.data.audioReactive, level = ar?.enabled ? this.audioLevel : 0, sens = ar ? ar.sensitivity / 5 : 1;
-    const sizeMul = ar?.enabled && ar.affectSize ? 1 + level * sens * 1.5 : 1, speedMul = ar?.enabled && ar.affectSpeed ? 1 + level * sens * 2 : 1;
-    const opacityMul = ar?.enabled && ar.affectOpacity ? Math.min(1.5, 0.5 + level * sens * 1.5) : 1;
     const studioGrad = this.studioGradient(), gradAnim = studioGrad ? computeGradientAnim(studioGrad, this.elapsedSec()) : undefined;
 
     for (const ps of this.data.particles) {
@@ -423,6 +453,39 @@ export class RuntimeEngine {
       const arr = this.particleState[ps.id]; if (!arr) continue;
       const exclAll = [...ps.excludeZoneIds, ...globalExcl], imgs = ps.customMediaIds.map((id) => this.getImg(id));
       
+      // Compute individual audio multipliers for this particle system
+      let sizeMul = 1;
+      let speedMul = 1;
+      let opacityMul = 1;
+
+      if (ps.audioReactive?.enabled) {
+        const cfg = ps.audioReactive;
+        const band = cfg.frequency || "bass";
+        const instantVal = this.audioBandLevels[band] || 0;
+        const targetRaw = instantVal * (cfg.sensitivity ?? 5);
+
+        const state = this.particleAudioStates[ps.id] || (this.particleAudioStates[ps.id] = { curLevel: 0 });
+        const smoothing = cfg.smoothing ?? 0.7;
+        const lerpFactor = 1 - smoothing;
+        state.curLevel += (targetRaw - state.curLevel) * lerpFactor;
+
+        const level = state.curLevel;
+
+        if (cfg.affectSize) sizeMul = 1 + level * 1.5;
+        if (cfg.affectSpeed) speedMul = 1 + level * 2;
+        if (cfg.affectOpacity) opacityMul = Math.min(1.5, 0.5 + level * 1.5);
+      } else {
+        // Fallback to legacy global audio reactive if present and active
+        const ar = this.data.audioReactive;
+        if (ar?.enabled) {
+          const sens = ar.sensitivity / 5;
+          const level = this.audioLevel;
+          if (ar.affectSize) sizeMul = 1 + level * sens * 1.5;
+          if (ar.affectSpeed) speedMul = 1 + level * sens * 2;
+          if (ar.affectOpacity) opacityMul = Math.min(1.5, 0.5 + level * sens * 1.5);
+        }
+      }
+
       for (const p of arr) {
         p.phase += p.phaseSpeed * dt;
         if (ps.type === "fireflies") {
@@ -696,6 +759,140 @@ export class RuntimeEngine {
     this.bgRotTimer = window.setInterval(rotate, interval);
   }
 
+  onMouseMove = (e: MouseEvent) => {
+    this.mouseX = (e.clientX / window.innerWidth) * 2 - 1;
+    this.mouseY = (e.clientY / window.innerHeight) * 2 - 1;
+  };
+
+  onDeviceOrientation = (e: DeviceOrientationEvent) => {
+    const b = e.beta || 0;
+    const g = e.gamma || 0;
+    this.tiltX = Math.max(-1, Math.min(1, g / 30));
+    this.tiltY = Math.max(-1, Math.min(1, b / 30));
+  };
+
+  bindInteractiveEvents(el: HTMLElement, a: any) {
+    el.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this.triggerActionsForEvent(a, "click");
+    });
+    el.addEventListener("dblclick", (e) => {
+      e.stopPropagation();
+      this.triggerActionsForEvent(a, "dblclick");
+    });
+    el.addEventListener("mouseenter", (e) => {
+      e.stopPropagation();
+      this.triggerActionsForEvent(a, "mouseenter");
+    });
+    el.addEventListener("mouseleave", (e) => {
+      e.stopPropagation();
+      this.triggerActionsForEvent(a, "mouseleave");
+    });
+    el.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.triggerActionsForEvent(a, "contextmenu");
+    });
+
+    let holdTimer: any = null;
+    el.addEventListener("mousedown", (e) => {
+      e.stopPropagation();
+      holdTimer = setTimeout(() => {
+        this.triggerActionsForEvent(a, "hold");
+      }, 800);
+    });
+    el.addEventListener("mouseup", () => { clearTimeout(holdTimer); });
+    el.addEventListener("mouseleave", () => { clearTimeout(holdTimer); });
+  }
+
+  triggerActionsForEvent(a: any, type: string) {
+    const trigger = a.interactiveEvents?.find((t: any) => t.type === type);
+    if (!trigger) return;
+    for (const act of trigger.actions) {
+      this.executeAction(act, a);
+    }
+  }
+
+  executeAction(act: any, a: any) {
+    if (act.type === "sound" && act.soundMediaId) {
+      const url = this.mediaMap[act.soundMediaId];
+      if (url) {
+        const audio = new Audio(url);
+        audio.volume = act.volume !== undefined ? act.volume : 0.8;
+        audio.play().catch(e => console.warn("Sound play failed", e));
+      }
+    }
+    else if (act.type === "animation" && act.animationName) {
+      const targetItem = this.assetEls[a.id];
+      if (targetItem) {
+        const contentEl = targetItem.contentEl;
+        contentEl.style.transform = "none";
+        const name = act.animationName;
+        const originalAnim = a.animation;
+        const originalSpeed = a.animSpeed;
+        a.animation = name;
+        a.animSpeed = 3;
+        setTimeout(() => {
+          a.animation = originalAnim || "none";
+          a.animSpeed = originalSpeed ?? 1;
+          contentEl.style.transform = "none";
+        }, 1200);
+      }
+    }
+    else if (act.type === "visibility" && act.targetAssetId) {
+      const targetItem = this.assetEls[act.targetAssetId];
+      if (targetItem) {
+        const visible = targetItem.el.style.display !== "none";
+        targetItem.el.style.display = visible ? "none" : "block";
+      }
+    }
+    else if (act.type === "particle" && act.targetParticleId) {
+      const ps = this.data.particles.find(p => p.id === act.targetParticleId);
+      const arr = this.particleState[act.targetParticleId];
+      if (ps && arr) {
+        const nImgs = ps.customMediaIds.length || 1;
+        for (let k = 0; k < 30; k++) {
+          const p = this.spawnParticle(ps, k % nImgs, false);
+          p.x = a.x + a.width / 2 + (Math.random() - 0.5) * 100;
+          p.y = a.y + a.height / 2 + (Math.random() - 0.5) * 100;
+          arr.push(p);
+        }
+      }
+    }
+    else if (act.type === "open_url" && act.url) {
+      window.open(act.url, "_blank");
+    }
+    else if (act.type === "script" && act.script) {
+      try {
+        const runUserScript = new Function("engine", "asset", act.script);
+        runUserScript(this, a);
+      } catch (err) {
+        console.error("Custom JS Script error:", err);
+      }
+    }
+  }
+
+  updateParallax() {
+    for (const id in this.assetEls) {
+      const item = this.assetEls[id];
+      const a = item.data;
+      const el = item.el;
+      if (a.parallax?.enabled) {
+        const trigger = a.parallax.trigger || "mouse";
+        const valX = trigger === "mouse" ? this.mouseX : this.tiltX;
+        const valY = trigger === "mouse" ? this.mouseY : this.tiltY;
+        const targetX = valX * (a.parallax.factorX ?? 20);
+        const targetY = valY * (a.parallax.factorY ?? 20);
+        const state = this.parallaxOffsets[a.id] || (this.parallaxOffsets[a.id] = { curX: 0, curY: 0 });
+        const smoothing = a.parallax.smoothing ?? 0.1;
+        state.curX += (targetX - state.curX) * smoothing;
+        state.curY += (targetY - state.curY) * smoothing;
+        el.style.left = (a.x + state.curX) + "px";
+        el.style.top = (a.y + state.curY) + "px";
+      }
+    }
+  }
+
   loop = (ts: number) => {
     if (!this.running) return;
     try {
@@ -708,7 +905,11 @@ export class RuntimeEngine {
         else if (animType === "hue") this.renderBgGradient(bgG.angle, anim.hueShift);
         else this.renderBgGradient(anim.angle);
       }
-      if (this.data.audioReactive?.enabled) this.updateAudio();
+      this.updateParallax();
+      const hasAudioAssets = this.data.assets.some(a => a.audioReactive?.enabled);
+      const hasAudioParticles = this.data.particles.some(p => p.enabled && p.audioReactive?.enabled);
+      if (this.data.audioReactive?.enabled || hasAudioAssets || hasAudioParticles) this.updateAudio();
+      this.updateAudioReactiveAssets(dt);
       this.updateParticles(dt * this.timeScale()); this.updateEvents(ts); this.updateDayNight(this.scaledNow(ts));
       this.checkMediaSpawns(ts);
     } catch (err) {
@@ -721,7 +922,11 @@ export class RuntimeEngine {
   start() {
     if (this.running) return; this.running = true; this.startTime = performance.now(); this.realBaseTime = this.startTime; this.simBaseTime = this.startTime; this.lastTs = 0;
     this.raf = requestAnimationFrame(this.loop); this.scheduleGroups(); this.startBgRotation();
-    if (this.data.audioReactive?.enabled) this.initAudio();
+    const hasAudioAssets = this.data.assets.some(a => a.audioReactive?.enabled);
+    const hasAudioParticles = this.data.particles.some(p => p.enabled && p.audioReactive?.enabled);
+    if (this.data.audioReactive?.enabled || hasAudioAssets || hasAudioParticles) this.initAudio();
+    window.addEventListener("mousemove", this.onMouseMove);
+    window.addEventListener("deviceorientation", this.onDeviceOrientation);
   }
 
   async initAudio() {
@@ -733,13 +938,101 @@ export class RuntimeEngine {
     } catch (e) { console.warn("Audio access denied", e); }
   }
 
-  updateAudio() {
-    if (!this.analyser || !this.audioData) return; this.analyser.getByteFrequencyData(this.audioData as any);
-    let sum = 0; for (let i = 0; i < this.audioData.length; i++) sum += this.audioData[i];
-    const instant = sum / this.audioData.length / 255, smoothing = this.data.audioReactive?.smoothing ?? 0.7;
-    this.audioLevel = this.audioLevel * smoothing + instant * (1 - smoothing);
+  getBandInstantLevel(band: "bass" | "mid" | "treble" | "full"): number {
+    if (!this.analyser || !this.audioData) return 0;
+    const len = this.audioData.length;
+    if (len === 0) return 0;
+
+    let start = 0;
+    let end = len;
+
+    if (band === "bass") {
+      start = 0;
+      end = Math.max(1, Math.round(len * 0.12)); // first ~12%
+    } else if (band === "mid") {
+      start = Math.round(len * 0.12);
+      end = Math.round(len * 0.5); // middle ~38%
+    } else if (band === "treble") {
+      start = Math.round(len * 0.5);
+      end = len; // top 50%
+    }
+
+    let sum = 0;
+    for (let i = start; i < end; i++) {
+      sum += this.audioData[i];
+    }
+    return sum / (end - start) / 255; // returns 0 .. 1
   }
 
-  stop() { this.running = false; cancelAnimationFrame(this.raf); Object.values(this.mediaTimers).forEach((t) => clearTimeout(t)); clearInterval(this.bgRotTimer); this.activeEvents.forEach((e) => e.el.remove()); this.activeEvents = []; this.mediaNextSpawnAt = {}; this.mediaInterval = {}; }
+  updateAudio() {
+    if (!this.analyser || !this.audioData) return;
+    this.analyser.getByteFrequencyData(this.audioData as any);
+
+    // Update global level (for legacy particles)
+    let sum = 0; for (let i = 0; i < this.audioData.length; i++) sum += this.audioData[i];
+    const instantGlobal = sum / this.audioData.length / 255;
+    const globalSmoothing = this.data.audioReactive?.smoothing ?? 0.7;
+    this.audioLevel = this.audioLevel * globalSmoothing + instantGlobal * (1 - globalSmoothing);
+
+    // Update specific band levels (for individual behaviors)
+    const bands: ("bass" | "mid" | "treble" | "full")[] = ["bass", "mid", "treble", "full"];
+    for (const b of bands) {
+      this.audioBandLevels[b] = this.getBandInstantLevel(b);
+    }
+  }
+
+  updateAudioReactiveAssets(dt: number) {
+    for (const id in this.assetEls) {
+      const item = this.assetEls[id];
+      const a = item.data;
+      const contentEl = item.contentEl;
+      if (a.audioReactive?.enabled) {
+        const cfg = a.audioReactive;
+        const band = cfg.frequency || "bass";
+        const instantVal = this.audioBandLevels[band] || 0; // 0..1
+        const targetRaw = instantVal * (cfg.sensitivity ?? 5);
+
+        const state = this.audioReactiveStates[a.id] || (this.audioReactiveStates[a.id] = { curLevel: 0 });
+        const smoothing = cfg.smoothing ?? 0.5;
+        const lerpFactor = 1 - smoothing;
+        state.curLevel += (targetRaw - state.curLevel) * lerpFactor;
+
+        const curLevel = state.curLevel;
+
+        // Apply visual properties to contentEl!
+        // 1. Scale (Pulsing)
+        const s = cfg.affectScale ? 1 + curLevel * 0.15 : 1;
+
+        // 2. Rotation (Wobbling)
+        const r = cfg.affectRotation ? curLevel * 12 : 0;
+
+        // 3. Position (Bouncing)
+        const y = cfg.affectPosition ? -curLevel * 30 : 0;
+
+        // Apply combining transforms
+        contentEl.style.transform = `translateY(${y}px) scale(${s}) rotate(${r}deg)`;
+
+        // 4. Opacity (Flickering)
+        contentEl.style.opacity = cfg.affectOpacity ? String(Math.max(0.1, 1 - curLevel * 0.8)) : "1";
+      } else {
+        // Reset styles if audioReactive was turned off dynamically
+        contentEl.style.transform = "none";
+        contentEl.style.opacity = "1";
+      }
+    }
+  }
+
+  stop() {
+    this.running = false;
+    cancelAnimationFrame(this.raf);
+    Object.values(this.mediaTimers).forEach((t) => clearTimeout(t));
+    clearInterval(this.bgRotTimer);
+    this.activeEvents.forEach((e) => e.el.remove());
+    this.activeEvents = [];
+    this.mediaNextSpawnAt = {};
+    this.mediaInterval = {};
+    window.removeEventListener("mousemove", this.onMouseMove);
+    window.removeEventListener("deviceorientation", this.onDeviceOrientation);
+  }
   destroy() { this.stop(); this.root.innerHTML = ""; }
 }
